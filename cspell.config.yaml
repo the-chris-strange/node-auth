@@ -1,0 +1,20 @@
+version: "0.2"
+language: en
+ignorePaths:
+  - cspell.config.yaml
+  - target
+dictionaries:
+  - rust
+  - google
+  - npm
+  - softwareTerms
+  - fullstack
+  - computing-acronyms
+  - filetypes
+  - git
+words:
+  - artifactregistry
+  - thiserror
+  - docsrs
+  - npmjs
+  - accesstoken

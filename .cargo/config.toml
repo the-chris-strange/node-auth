@@ -1,0 +1,3 @@
+[alias]
+docs = "doc --no-deps --all-features"
+doc-open = "doc --no-deps --all-features --open"
