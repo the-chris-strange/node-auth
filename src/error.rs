@@ -17,9 +17,15 @@ pub enum AuthError {
     #[error("Configuration error: {0}")]
     Config(String),
 
-    /// YAML serialization or deserialization failure for Yarn configs.
-    #[error("YAML parse/format error: {0}")]
-    Yaml(#[from] serde_yaml::Error),
+    /// Invalid source or destination Yarn configuration.
+    #[error("YAML parse error in {input}: {source}")]
+    YamlInput {
+        /// Whether the error came from the source or credential configuration.
+        input: &'static str,
+        /// The underlying YAML parse error.
+        #[source]
+        source: yaml_edit::YamlError,
+    },
 
     /// Regular expression compilation or matching error.
     #[error("Regex error: {0}")]

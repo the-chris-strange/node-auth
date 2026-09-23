@@ -13,7 +13,7 @@ Google's official `google-artifactregistry-auth` tool is distributed as an npm p
 - In minimal CI/CD containers, Docker build stages, or restricted developer workstations, you often need authentication *before* Node/npm is bootstrapped or when bootstrapping dependency caches.
 - It introduces heavy Node.js runtime dependencies just to write an authentication token to `.npmrc`.
 
-`node-auth` is a single native static binary that runs instantly on **Windows**, **Linux**, and **macOS** with zero external runtime dependencies.
+`node-auth` builds native binaries for **Windows**, **Linux**, and **macOS** and does not require a Node.js runtime. Static linking depends on the selected build target.
 
 ---
 
@@ -104,18 +104,16 @@ When running with `--local-credential`:
 
 - It writes the token directly to `./.npmrc` (creating the file if it doesn't exist).
 - **Git Safety Check**:
-  - If the directory is a Git repository and `.npmrc` is **not** listed in `.gitignore`, it outputs a prominent warning:
+  - If Git reports `.npmrc` as tracked or not ignored, it warns:
 
     ```text
-    ⚠️  WARNING: Writing credentials to local .npmrc, but '.npmrc' is not ignored in .gitignore!
-       Make sure to add '.npmrc' to your .gitignore to avoid committing secret tokens to version control.
+    Warning: Local .npmrc is tracked or not ignored by Git; it may expose credentials if committed.
     ```
 
   - If the directory is **not** a Git repository, it reminds:
 
     ```text
-    ⚠️  WARNING: Writing credentials to local .npmrc in a directory that is not a Git repository.
-       Ensure this file is never committed or pushed to version control.
+    Warning: Local .npmrc is outside a Git repository; keep credentials out of version control.
     ```
 
 ### Only Print the Access Token (`--print-token`)
@@ -139,7 +137,7 @@ export NPM_TOKEN=$(node-auth --print-token)
 | `--credential-config-yarn <PATH>` | - | `~/.yarnrc.yml` | Path to `.yarnrc.yml` to write credentials to. |
 | `--yarn <BOOL>` | - | Auto-detect | Explicitly enable (`--yarn true`) or disable (`--yarn false`) Yarn updating. |
 | `--token <TOKEN>` | `NODE_AUTH_TOKEN` | - | Explicit token to use instead of ADC/gcloud. |
-| `--allow-all-domains` | - | `false` | Allow attaching token to any registry domain, not just `*-npm.pkg.dev`. |
+| `--allow-all-domains` | - | `false` | Allow attaching the token to other HTTPS registry domains in both npm and Yarn configuration. |
 | `-v`, `--verbose` | - | `false` | Enable verbose logging output. |
 | `--print-token` | - | `false` | Output access token to stdout without modifying config files. |
 | `-h`, `--help` | - | - | Print help information. |
@@ -185,6 +183,16 @@ npmScopes:
     npmAlwaysAuth: true
     npmAuthToken: "ya29.a0AfH6..."
 ```
+
+Registry URLs must use HTTPS and may not contain embedded credentials, queries, or fragments. By default, only Artifact Registry hosts ending in `-npm.pkg.dev` receive a token; other Yarn scopes are left unchanged. `--allow-all-domains` explicitly permits other HTTPS hosts. Malformed Yarn YAML causes an error without replacing either rc file.
+
+## File Updates and Library Use
+
+Before reading, paths are resolved to absolute paths, including symlink targets. The tool locks the affected files during a run, stages all changes in temporary files beside their destinations, and replaces each file atomically. Existing Unix mode bits are preserved, and new credential files are created with owner-only permissions on Unix. Existing credential files readable by other local users trigger a warning. On Windows, Rust's read-only file attribute is preserved; Windows access-control lists may differ after replacement.
+
+The locking files (for example, `.npmrc.node-auth.lock`) remain beside the rc files so concurrent runs can coordinate. They contain no credentials. If using local credentials, add `*.node-auth.lock` to your project `.gitignore` as desired. Replacing multiple rc files is not one filesystem-wide atomic operation; interruption between replacements can leave a partial update.
+
+The Rust library returns `Result<RunOutcome, AuthError>` from `run(&Options)`. The outcome contains either a token for `print_token` or the paths updated and the local Git safety status. The library does not initialize a logger or print terminal messages; the CLI handles those results.
 
 ---
 

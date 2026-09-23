@@ -1,11 +1,13 @@
 //! Command-line argument parsing and CLI definitions for `node-auth`.
 
-use std::path::PathBuf;
-use clap::Parser;
 use crate::Options;
+use crate::{logger, run};
+use clap::Parser;
+use std::path::PathBuf;
+use std::process::ExitCode;
 
 /// Command-line arguments for the `node-auth` CLI.
-#[derive(Parser, Debug, Clone, PartialEq, Eq)]
+#[derive(Parser, Clone, PartialEq, Eq)]
 #[command(
     name = "node-auth",
     about = "Authenticates Node (npm, yarn, pnpm) to Google Artifact Registry using Google Cloud ADC",
@@ -59,6 +61,24 @@ pub struct Cli {
     pub print_token: bool,
 }
 
+impl std::fmt::Debug for Cli {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Cli")
+            .field("repo_config", &self.repo_config)
+            .field("credential_config", &self.credential_config)
+            .field("local_credential", &self.local_credential)
+            .field("repo_config_yarn", &self.repo_config_yarn)
+            .field("credential_config_yarn", &self.credential_config_yarn)
+            .field("yarn", &self.yarn)
+            .field("token", &self.token.as_ref().map(|_| "[redacted]"))
+            .field("allow_all_domains", &self.allow_all_domains)
+            .field("verbose", &self.verbose)
+            .field("print_token", &self.print_token)
+            .finish()
+    }
+}
+
 impl Cli {
     /// Converts the parsed CLI arguments into library execution [`Options`].
     pub fn to_options(&self) -> Options {
@@ -70,9 +90,24 @@ impl Cli {
             local_credential: self.local_credential,
             token: self.token.clone(),
             allow_all_domains: self.allow_all_domains,
-            verbose: self.verbose,
             yarn: self.yarn,
             print_token: self.print_token,
+        }
+    }
+}
+
+/// Parse arguments, run the library, and present the result for either binary.
+pub async fn execute() -> ExitCode {
+    let cli = Cli::parse();
+    logger::init(cli.verbose);
+    match run(&cli.to_options()).await {
+        Ok(outcome) => {
+            logger::present_outcome(outcome);
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            logger::present_error(&error);
+            ExitCode::FAILURE
         }
     }
 }
@@ -104,7 +139,8 @@ mod tests {
 
     #[test]
     fn test_cli_print_token_flag() {
-        let cli = Cli::try_parse_from(["node-auth", "--print-token", "--token", "custom-token"]).unwrap();
+        let cli =
+            Cli::try_parse_from(["node-auth", "--print-token", "--token", "custom-token"]).unwrap();
         assert!(cli.print_token);
         assert_eq!(cli.token.as_deref(), Some("custom-token"));
     }
@@ -113,8 +149,20 @@ mod tests {
     fn test_cli_to_options() {
         let cli = Cli::try_parse_from(["node-auth", "-v", "-l", "--token", "tok"]).unwrap();
         let options = cli.to_options();
-        assert!(options.verbose);
+        assert!(cli.verbose);
         assert!(options.local_credential);
         assert_eq!(options.token.as_deref(), Some("tok"));
+    }
+
+    #[test]
+    fn test_debug_redacts_tokens() {
+        let cli = Cli::try_parse_from(["node-auth", "--token", "super-secret-token"]).unwrap();
+        let cli_debug = format!("{cli:?}");
+        assert!(cli_debug.contains("[redacted]"));
+        assert!(!cli_debug.contains("super-secret-token"));
+
+        let options_debug = format!("{:?}", cli.to_options());
+        assert!(options_debug.contains("[redacted]"));
+        assert!(!options_debug.contains("super-secret-token"));
     }
 }

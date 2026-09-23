@@ -3,11 +3,13 @@
 //! Handles scoped and unscoped Artifact Registry repository definitions, `_authToken` credential lines,
 //! legacy basic auth password and username cleanup, and comment/formatting preservation.
 
-use std::collections::BTreeMap;
-use std::fs;
-use std::path::Path;
-use regex::Regex;
 use crate::error::AuthError;
+use crate::fs::{FileTransaction, resolve};
+use crate::registry::RegistryPolicy;
+use crate::token::validate_token;
+use regex::Regex;
+use std::collections::BTreeMap;
+use std::path::Path;
 
 /// Recognized line configurations in `.npmrc` files.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,6 +67,7 @@ impl NpmrcConfigType {
 
 /// Regular-expression-based parser for `.npmrc` lines.
 pub struct NpmrcParser {
+    policy: RegistryPolicy,
     registry_re: Regex,
     auth_token_re: Regex,
     password_re: Regex,
@@ -76,100 +79,93 @@ impl NpmrcParser {
     ///
     /// If `allow_all_domains` is false, only `*-npm.pkg.dev` Artifact Registry domains match.
     pub fn new(allow_all_domains: bool) -> Result<Self, AuthError> {
-        let (reg_pattern, auth_pattern, pass_pattern, user_pattern) = if allow_all_domains {
-            (
-                r"^(@[a-zA-Z0-9-*~][a-zA-Z0-9-*._~]*:)?registry=https:(//[^ \t\r\n]+/?)$",
-                r"^(//[^ \t\r\n]+/?):_authToken=.*$",
-                r"^(//[^ \t\r\n]+/?):_password=.*$",
-                r"^(//[^ \t\r\n]+/?):username=oauth2accesstoken$",
-            )
-        } else {
-            (
-                r"^(@[a-zA-Z0-9-*~][a-zA-Z0-9-*._~]*:)?registry=https:(//[a-zA-Z0-9-]+[-]npm[.]pkg[.]dev/[^ \t\r\n]+/?)$",
-                r"^(//[a-zA-Z0-9-]+[-]npm[.]pkg[.]dev/[^ \t\r\n]+/?):_authToken=.*$",
-                r"^(//[a-zA-Z0-9-]+[-]npm[.]pkg[.]dev/[^ \t\r\n]+/?):_password=.*$",
-                r"^(//[a-zA-Z0-9-]+[-]npm[.]pkg[.]dev/[^ \t\r\n]+/?):username=oauth2accesstoken$",
-            )
-        };
-
         Ok(Self {
-            registry_re: Regex::new(reg_pattern)?,
-            auth_token_re: Regex::new(auth_pattern)?,
-            password_re: Regex::new(pass_pattern)?,
-            username_re: Regex::new(user_pattern)?,
+            policy: RegistryPolicy { allow_all_domains },
+            registry_re: Regex::new(
+                r"^(@[a-zA-Z0-9-*~][a-zA-Z0-9-*._~]*:)?registry=(https://[^ \t\r\n]+)$",
+            )?,
+            auth_token_re: Regex::new(r"^(//[^ \t\r\n]+):_authToken=.*$")?,
+            password_re: Regex::new(r"^(//[^ \t\r\n]+):_password=.*$")?,
+            username_re: Regex::new(r"^(//[^ \t\r\n]+):username=oauth2accesstoken$")?,
         })
     }
 
-    /// Normalizes registry URL to always start with `//` and end with `/`.
-    pub fn normalize_registry(reg: &str) -> String {
-        let mut s = reg.trim().to_string();
-        if !s.starts_with("//") {
-            if let Some(stripped) = s.strip_prefix("https://") {
-                s = format!("//{stripped}");
-            } else if let Some(stripped) = s.strip_prefix("http://") {
-                s = format!("//{stripped}");
-            } else {
-                s = format!("//{s}");
-            }
-        }
-        if !s.ends_with('/') {
-            s.push('/');
-        }
-        s
-    }
-
     /// Parses a single `.npmrc` configuration line into a [`NpmrcConfigType`].
-    pub fn parse_line(&self, line: &str) -> NpmrcConfigType {
+    pub fn parse_line(&self, line: &str) -> Result<NpmrcConfigType, AuthError> {
         let trimmed = line.trim();
 
         if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
-            return NpmrcConfigType::Other(line.to_string());
+            return Ok(NpmrcConfigType::Other(line.to_string()));
         }
 
         if let Some(caps) = self.registry_re.captures(trimmed) {
-            let scope = caps.get(1).map(|m| {
-                m.as_str().trim_end_matches(':').to_string()
-            });
+            let scope = caps
+                .get(1)
+                .map(|m| m.as_str().trim_end_matches(':').to_string());
             let registry_raw = caps.get(2).map(|m| m.as_str()).unwrap_or("");
-            let registry = Self::normalize_registry(registry_raw);
-            return NpmrcConfigType::Registry {
-                scope,
-                registry,
-                raw: line.to_string(),
-            };
+            if let Some(registry) = self.policy.parse(registry_raw)? {
+                return Ok(NpmrcConfigType::Registry {
+                    scope,
+                    registry: registry.npm_key().to_string(),
+                    raw: line.to_string(),
+                });
+            }
         }
 
         if let Some(caps) = self.auth_token_re.captures(trimmed) {
-            let registry = Self::normalize_registry(caps.get(1).map(|m| m.as_str()).unwrap_or(""));
-            let token_part = trimmed
-                .split_once(":_authToken=")
-                .map(|(_, t)| t.trim().trim_matches('"').trim_matches('\'').to_string())
-                .unwrap_or_default();
-            return NpmrcConfigType::AuthToken {
-                registry,
-                token: token_part,
-            };
+            let key = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            if let Some(registry) = self.policy.parse_npm_key(key)? {
+                let token_part = trimmed
+                    .split_once(":_authToken=")
+                    .map(|(_, t)| t.trim().trim_matches('"').trim_matches('\'').to_string())
+                    .unwrap_or_default();
+                return Ok(NpmrcConfigType::AuthToken {
+                    registry: registry.npm_key().to_string(),
+                    token: token_part,
+                });
+            }
         }
 
         if let Some(caps) = self.password_re.captures(trimmed) {
-            let registry = Self::normalize_registry(caps.get(1).map(|m| m.as_str()).unwrap_or(""));
-            let pass_part = trimmed
-                .split_once(":_password=")
-                .map(|(_, p)| p.trim().to_string())
-                .unwrap_or_default();
-            return NpmrcConfigType::Password {
-                registry,
-                password: pass_part,
-            };
+            let key = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            if let Some(registry) = self.policy.parse_npm_key(key)? {
+                let pass_part = trimmed
+                    .split_once(":_password=")
+                    .map(|(_, p)| p.trim().to_string())
+                    .unwrap_or_default();
+                return Ok(NpmrcConfigType::Password {
+                    registry: registry.npm_key().to_string(),
+                    password: pass_part,
+                });
+            }
         }
 
         if let Some(caps) = self.username_re.captures(trimmed) {
-            let registry = Self::normalize_registry(caps.get(1).map(|m| m.as_str()).unwrap_or(""));
-            return NpmrcConfigType::Username { registry };
+            let key = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            if let Some(registry) = self.policy.parse_npm_key(key)? {
+                return Ok(NpmrcConfigType::Username {
+                    registry: registry.npm_key().to_string(),
+                });
+            }
         }
 
-        NpmrcConfigType::Other(line.to_string())
+        Ok(NpmrcConfigType::Other(line.to_string()))
     }
+}
+
+/// Whether either npm configuration contains an eligible registry definition.
+pub fn has_registry(
+    from_content: &str,
+    to_content: &str,
+    allow_all_domains: bool,
+) -> Result<bool, AuthError> {
+    let parser = NpmrcParser::new(allow_all_domains)?;
+    for line in from_content.lines().chain(to_content.lines()) {
+        if matches!(parser.parse_line(line)?, NpmrcConfigType::Registry { .. }) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Pure in-memory transformation of `.npmrc` contents.
@@ -199,14 +195,19 @@ pub fn transform_npmrc_contents(
     allow_all_domains: bool,
     same_file: bool,
 ) -> Result<(String, String), AuthError> {
+    validate_token(creds)?;
     let parser = NpmrcParser::new(allow_all_domains)?;
     let mut registries_found = BTreeMap::new();
     let mut from_lines_out = Vec::new();
 
     // Parse source config
     for line in from_content.lines() {
-        match parser.parse_line(line) {
-            NpmrcConfigType::Registry { scope, registry, raw } => {
+        match parser.parse_line(line)? {
+            NpmrcConfigType::Registry {
+                scope,
+                registry,
+                raw,
+            } => {
                 registries_found.insert(registry.clone(), scope);
                 from_lines_out.push(raw);
             }
@@ -214,7 +215,9 @@ pub fn transform_npmrc_contents(
                 if same_file {
                     // Updating same file: will be refreshed below
                 } else {
-                    log::debug!("Moving existing _authToken for {registry} from project .npmrc to credential .npmrc");
+                    log::debug!(
+                        "Moving existing _authToken for {registry} from project .npmrc to credential .npmrc"
+                    );
                     // Strip from project config so secrets aren't checked into git
                 }
             }
@@ -234,7 +237,10 @@ pub fn transform_npmrc_contents(
 
     if !same_file {
         for line in to_content.lines() {
-            if let NpmrcConfigType::Registry { scope, registry, .. } = parser.parse_line(line) {
+            if let NpmrcConfigType::Registry {
+                scope, registry, ..
+            } = parser.parse_line(line)?
+            {
                 registries_found.entry(registry).or_insert(scope);
             }
         }
@@ -256,26 +262,28 @@ pub fn transform_npmrc_contents(
 
     if !to_content.is_empty() {
         for line in to_content.lines() {
-            let parsed = parser.parse_line(line);
+            let parsed = parser.parse_line(line)?;
             match parsed {
                 NpmrcConfigType::AuthToken { registry, .. } => {
-                    if pending_registries.contains_key(&registry) {
-                        to_lines_out.push(format!("{registry}:_authToken=\"{creds}\""));
-                        pending_registries.remove(&registry);
+                    if registries_found.contains_key(&registry) {
+                        if pending_registries.remove(&registry).is_some() {
+                            to_lines_out.push(format!("{registry}:_authToken=\"{creds}\""));
+                        }
                     } else {
                         to_lines_out.push(line.to_string());
                     }
                 }
                 NpmrcConfigType::Password { registry, .. } => {
-                    if pending_registries.contains_key(&registry) {
-                        to_lines_out.push(format!("{registry}:_authToken=\"{creds}\""));
-                        pending_registries.remove(&registry);
+                    if registries_found.contains_key(&registry) {
+                        if pending_registries.remove(&registry).is_some() {
+                            to_lines_out.push(format!("{registry}:_authToken=\"{creds}\""));
+                        }
                     } else {
                         to_lines_out.push(line.to_string());
                     }
                 }
                 NpmrcConfigType::Username { registry } => {
-                    if !pending_registries.contains_key(&registry) {
+                    if !registries_found.contains_key(&registry) {
                         to_lines_out.push(line.to_string());
                     }
                 }
@@ -306,8 +314,6 @@ pub fn transform_npmrc_contents(
 /// * `to_path` - Path to `.npmrc` file to write credentials to (e.g. user `~/.npmrc` or local `./.npmrc`).
 /// * `creds` - The OAuth2 access token string.
 /// * `allow_all_domains` - Whether to allow non-pkg.dev domains.
-/// * `verbose` - If true, enables debug logging during configuration updates.
-///
 /// # Errors
 ///
 /// Returns [`AuthError::Io`] if reading or writing files fails, or [`AuthError::Config`] if no registry was found.
@@ -316,60 +322,38 @@ pub fn update_npmrc_configs(
     to_path: &Path,
     creds: &str,
     allow_all_domains: bool,
-    verbose: bool,
 ) -> Result<(), AuthError> {
-    if verbose {
-        crate::logger::set_verbose(true);
-    }
-
+    let from_path = resolve(from_path)?;
+    let to_path = resolve(to_path)?;
     let same_file = from_path == to_path;
-
-    let from_content = if from_path.exists() {
-        fs::read_to_string(from_path)?
-    } else {
-        String::new()
-    };
-
-    let to_content = if to_path.exists() {
-        fs::read_to_string(to_path)?
-    } else {
-        String::new()
-    };
+    let mut transaction = FileTransaction::new(&[from_path.clone(), to_path.clone()])?;
+    let from_content = transaction.contents(&from_path)?.to_owned();
+    let to_content = transaction.contents(&to_path)?.to_owned();
 
     let (from_output, to_output) = transform_npmrc_contents(
         &from_content,
-        if same_file { &from_content } else { &to_content },
+        if same_file {
+            &from_content
+        } else {
+            &to_content
+        },
         creds,
         allow_all_domains,
         same_file,
     )?;
 
-    // Ensure parent directory for to_path exists
-    if let Some(parent) = to_path.parent() {
-        if !parent.as_os_str().is_empty() && !parent.exists() {
-            fs::create_dir_all(parent)?;
-        }
+    transaction.stage(&to_path, &to_output)?;
+    if !same_file && transaction.existed(&from_path)? && from_output != from_content {
+        transaction.stage(&from_path, &from_output)?;
     }
-
-    if same_file {
-        fs::write(to_path, to_output)?;
-        log::debug!("Updated local .npmrc in {}", to_path.display());
-    } else {
-        fs::write(to_path, to_output)?;
-        log::debug!("Updated credential .npmrc in {}", to_path.display());
-
-        if from_path.exists() {
-            fs::write(from_path, from_output)?;
-            log::debug!("Cleaned project .npmrc in {}", from_path.display());
-        }
-    }
-
+    transaction.commit()?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use tempfile::tempdir;
 
     #[test]
@@ -377,9 +361,11 @@ mod tests {
         let parser = NpmrcParser::new(false).unwrap();
 
         let line = "@my-org:registry=https://us-central1-npm.pkg.dev/my-project/my-repo/";
-        let parsed = parser.parse_line(line);
+        let parsed = parser.parse_line(line).unwrap();
         match parsed {
-            NpmrcConfigType::Registry { scope, registry, .. } => {
+            NpmrcConfigType::Registry {
+                scope, registry, ..
+            } => {
                 assert_eq!(scope.as_deref(), Some("@my-org"));
                 assert_eq!(registry, "//us-central1-npm.pkg.dev/my-project/my-repo/");
             }
@@ -392,11 +378,16 @@ mod tests {
         let parser = NpmrcParser::new(false).unwrap();
 
         let line = "registry=https://europe-west1-npm.pkg.dev/google-cloud/demo-repo/";
-        let parsed = parser.parse_line(line);
+        let parsed = parser.parse_line(line).unwrap();
         match parsed {
-            NpmrcConfigType::Registry { scope, registry, .. } => {
+            NpmrcConfigType::Registry {
+                scope, registry, ..
+            } => {
                 assert_eq!(scope, None);
-                assert_eq!(registry, "//europe-west1-npm.pkg.dev/google-cloud/demo-repo/");
+                assert_eq!(
+                    registry,
+                    "//europe-west1-npm.pkg.dev/google-cloud/demo-repo/"
+                );
             }
             _ => panic!("Expected Registry variant"),
         }
@@ -407,7 +398,7 @@ mod tests {
         let parser = NpmrcParser::new(false).unwrap();
 
         let line = "//us-central1-npm.pkg.dev/my-project/my-repo/:_authToken=\"ya29.sample-token\"";
-        let parsed = parser.parse_line(line);
+        let parsed = parser.parse_line(line).unwrap();
         match parsed {
             NpmrcConfigType::AuthToken { registry, token } => {
                 assert_eq!(registry, "//us-central1-npm.pkg.dev/my-project/my-repo/");
@@ -419,15 +410,30 @@ mod tests {
 
     #[test]
     fn test_in_memory_transform() {
-        let from = "@corp:registry=https://us-central1-npm.pkg.dev/my-corp/my-npm/\nstrict-ssl=true\n";
+        let from =
+            "@corp:registry=https://us-central1-npm.pkg.dev/my-corp/my-npm/\nstrict-ssl=true\n";
         let to = "//registry.npmjs.org/:_authToken=\"npm_secret_xyz\"\n";
         let token = "fresh-adc-token-12345";
 
         let (from_out, to_out) = transform_npmrc_contents(from, to, token, false, false).unwrap();
-        assert!(from_out.contains("@corp:registry=https://us-central1-npm.pkg.dev/my-corp/my-npm/"));
+        assert!(
+            from_out.contains("@corp:registry=https://us-central1-npm.pkg.dev/my-corp/my-npm/")
+        );
         assert!(from_out.contains("strict-ssl=true"));
         assert!(to_out.contains("//registry.npmjs.org/:_authToken=\"npm_secret_xyz\""));
-        assert!(to_out.contains("//us-central1-npm.pkg.dev/my-corp/my-npm/:_authToken=\"fresh-adc-token-12345\""));
+        assert!(to_out.contains(
+            "//us-central1-npm.pkg.dev/my-corp/my-npm/:_authToken=\"fresh-adc-token-12345\""
+        ));
+    }
+
+    #[test]
+    fn duplicate_legacy_credentials_are_removed() {
+        let source = "@corp:registry=https://us-npm.pkg.dev/project/repo/\n";
+        let target = "//us-npm.pkg.dev/project/repo/:_authToken=old\n//us-npm.pkg.dev/project/repo/:_password=old\n//us-npm.pkg.dev/project/repo/:username=oauth2accesstoken\n";
+        let (_, updated) = transform_npmrc_contents(source, target, "new", false, false).unwrap();
+        assert_eq!(updated.matches(":_authToken=").count(), 1);
+        assert!(!updated.contains("old"));
+        assert!(!updated.contains(":username="));
     }
 
     #[test]
@@ -442,25 +448,31 @@ mod tests {
              @corp:registry=https://us-central1-npm.pkg.dev/my-corp/my-npm/\n\
              //us-central1-npm.pkg.dev/my-corp/my-npm/:_authToken=\"old-expired-token\"\n\
              strict-ssl=true\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         fs::write(
             &user_npmrc,
             "//registry.npmjs.org/:_authToken=\"npm_secret_xyz\"\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let token = "fresh-adc-token-12345";
-        update_npmrc_configs(&project_npmrc, &user_npmrc, token, false, false).unwrap();
+        update_npmrc_configs(&project_npmrc, &user_npmrc, token, false).unwrap();
 
         let project_out = fs::read_to_string(&project_npmrc).unwrap();
         let user_out = fs::read_to_string(&user_npmrc).unwrap();
 
-        assert!(project_out.contains("@corp:registry=https://us-central1-npm.pkg.dev/my-corp/my-npm/"));
+        assert!(
+            project_out.contains("@corp:registry=https://us-central1-npm.pkg.dev/my-corp/my-npm/")
+        );
         assert!(project_out.contains("strict-ssl=true"));
         assert!(!project_out.contains("_authToken"));
 
         assert!(user_out.contains("//registry.npmjs.org/:_authToken=\"npm_secret_xyz\""));
-        assert!(user_out.contains("//us-central1-npm.pkg.dev/my-corp/my-npm/:_authToken=\"fresh-adc-token-12345\""));
+        assert!(user_out.contains(
+            "//us-central1-npm.pkg.dev/my-corp/my-npm/:_authToken=\"fresh-adc-token-12345\""
+        ));
     }
 
     #[test]
@@ -474,16 +486,19 @@ mod tests {
             "@corp:registry=https://us-central1-npm.pkg.dev/my-corp/my-npm/\n\
              //us-central1-npm.pkg.dev/my-corp/my-npm/:_password=base64pass\n\
              //us-central1-npm.pkg.dev/my-corp/my-npm/:username=oauth2accesstoken\n",
-        ).unwrap();
+        )
+        .unwrap();
 
-        update_npmrc_configs(&project_npmrc, &user_npmrc, "new-token", false, false).unwrap();
+        update_npmrc_configs(&project_npmrc, &user_npmrc, "new-token", false).unwrap();
 
         let project_out = fs::read_to_string(&project_npmrc).unwrap();
         let user_out = fs::read_to_string(&user_npmrc).unwrap();
 
         assert!(!project_out.contains("_password"));
         assert!(!project_out.contains("username=oauth2accesstoken"));
-        assert!(user_out.contains("//us-central1-npm.pkg.dev/my-corp/my-npm/:_authToken=\"new-token\""));
+        assert!(
+            user_out.contains("//us-central1-npm.pkg.dev/my-corp/my-npm/:_authToken=\"new-token\"")
+        );
     }
 
     #[test]
@@ -495,14 +510,19 @@ mod tests {
             &local_npmrc,
             "@corp:registry=https://us-central1-npm.pkg.dev/my-corp/my-npm/\n\
              save-exact=true\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let token = "local-token-999";
-        update_npmrc_configs(&local_npmrc, &local_npmrc, token, false, false).unwrap();
+        update_npmrc_configs(&local_npmrc, &local_npmrc, token, false).unwrap();
 
         let out = fs::read_to_string(&local_npmrc).unwrap();
         assert!(out.contains("@corp:registry=https://us-central1-npm.pkg.dev/my-corp/my-npm/"));
         assert!(out.contains("save-exact=true"));
-        assert!(out.contains("//us-central1-npm.pkg.dev/my-corp/my-npm/:_authToken=\"local-token-999\""));
+        assert!(
+            out.contains(
+                "//us-central1-npm.pkg.dev/my-corp/my-npm/:_authToken=\"local-token-999\""
+            )
+        );
     }
 }
