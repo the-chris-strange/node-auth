@@ -45,6 +45,45 @@ Google's official `google-artifactregistry-auth` tool is distributed as an npm p
 
 ## Installation
 
+### Cargo
+
+```bash
+cargo install node-auth --locked
+```
+
+This installs both `node-auth` and the compatibility command
+`artifactregistry-auth`.
+
+### Homebrew
+
+Release automation publishes a formula to the tap configured by the maintainer:
+
+```bash
+brew install OWNER/TAP/node-auth
+```
+
+Replace `OWNER/TAP` with the configured tap repository. The generated
+`node-auth.rb` formula is also attached to every GitHub release.
+
+### Scoop
+
+Release automation publishes a manifest to the bucket configured by the
+maintainer:
+
+```powershell
+scoop bucket add node-auth https://github.com/OWNER/BUCKET
+scoop install node-auth
+```
+
+Replace `OWNER/BUCKET` with the configured bucket repository. The generated
+`node-auth.json` manifest is also attached to every GitHub release.
+
+### GitHub Releases
+
+Prebuilt archives for Linux x86-64, macOS Intel and Apple Silicon, and Windows
+x86-64 are available on the repository's Releases page. Each release includes
+a `SHA256SUMS` file.
+
 ### From Source
 
 ```bash
@@ -194,52 +233,35 @@ The locking files (for example, `.npmrc.node-auth.lock`) remain beside the rc fi
 
 The Rust library returns `Result<RunOutcome, AuthError>` from `run(&Options)`. The outcome contains either a token for `print_token` or the paths updated and the local Git safety status. The library does not initialize a logger or print terminal messages; the CLI handles those results.
 
----
+## Maintainer Releases
 
-## CI/CD Examples
+CI runs formatting, lint, packaging, and tests on every pull request and push to
+`main`. Tests run on current GitHub-hosted Linux, macOS, and Windows runners.
 
-### GitHub Actions (Workload Identity Federation)
+To publish a release:
 
-```yaml
-name: CI
-on: [push]
+1. Update `version` in `Cargo.toml`, update `Cargo.lock`, and merge the change.
+2. Create and push the matching tag, for example `v0.2.0`.
+3. Approve the protected `release` environment if repository rules require it.
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
+The release workflow publishes the crate, creates native archives and checksums,
+creates the GitHub release, and renders Homebrew and Scoop package definitions.
+Configure the repository with:
 
-    steps:
-      - uses: actions/checkout@v4
+- A `release` GitHub Actions environment, preferably restricted to protected
+  tags and requiring approval.
+- The `CARGO_REGISTRY_TOKEN` environment secret with permission to publish the
+  `node-auth` crate.
+- Optional `HOMEBREW_TAP_REPOSITORY` and `SCOOP_BUCKET_REPOSITORY` repository
+  variables, each in `owner/repository` form.
+- Optional `PACKAGE_REPOSITORY_TOKEN` environment secret with Contents write
+  access to those package repositories. It is required when either repository
+  variable is configured.
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: 'projects/123456789/locations/global/workloadIdentityPools/my-pool/providers/my-provider'
-          service_account: 'my-service-account@my-project.iam.gserviceaccount.com'
-
-      # Authenticate npm to GAR before running npm/pnpm/yarn install
-      - name: Authenticate Node to Artifact Registry
-        run: |
-          node-auth --local-credential
-
-      - name: Install dependencies
-        run: npm ci
-```
-
-### Google Cloud Build
-
-```yaml
-steps:
-  - name: 'us-docker.pkg.dev/my-project/tools/node-auth'
-    args: ['--local-credential']
-
-  - name: 'node:20'
-    entrypoint: 'npm'
-    args: ['ci']
-```
+The Homebrew repository should use the conventional `homebrew-TAP` name. The
+workflow writes `Formula/node-auth.rb`. The Scoop repository receives
+`node-auth.json` at its root. If those repositories are not configured, the
+formula and manifest remain available as GitHub release assets.
 
 ---
 
