@@ -46,11 +46,7 @@ pub fn init(verbose: bool) {
 pub fn present_outcome(outcome: RunOutcome) {
     match outcome {
         RunOutcome::Token(token) => println!("{token}"),
-        RunOutcome::Updated {
-            paths,
-            git_status,
-            broadly_readable,
-        } => {
+        RunOutcome::Updated { paths, git_status } => {
             if let Some(status) = git_status {
                 match status {
                     GitStatus::GitRepoNotIgnored => eprintln!(
@@ -67,13 +63,6 @@ pub fn present_outcome(outcome: RunOutcome) {
                     ),
                     GitStatus::GitRepoIgnored => {}
                 }
-            }
-            for path in broadly_readable {
-                eprintln!(
-                    "{} Existing credential file is readable by other local users: {}",
-                    "Warning:".yellow().bold(),
-                    path.display()
-                );
             }
             if !paths.is_empty() {
                 println!(

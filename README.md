@@ -51,13 +51,13 @@ Google's official `google-artifactregistry-auth` tool is distributed as an npm p
 cargo install --path .
 ```
 
-This installs both `node-auth` and the drop-in alias `google-artifactregistry-auth` to `~/.cargo/bin`.
+This installs both `node-auth` and the drop-in alias `artifactregistry-auth` to `~/.cargo/bin`.
 
 ### Building Release Binaries
 
 ```bash
 cargo build --release
-# Binaries available in target/release/node-auth and target/release/google-artifactregistry-auth
+# Binaries available in target/release/node-auth and target/release/artifactregistry-auth
 ```
 
 ### Generating API Documentation
@@ -188,7 +188,7 @@ Registry URLs must use HTTPS and may not contain embedded credentials, queries, 
 
 ## File Updates and Library Use
 
-Before reading, paths are resolved to absolute paths, including symlink targets. The tool locks the affected files during a run, stages all changes in temporary files beside their destinations, and replaces each file atomically. Existing Unix mode bits are preserved, and new credential files are created with owner-only permissions on Unix. Existing credential files readable by other local users trigger a warning. On Windows, Rust's read-only file attribute is preserved; Windows access-control lists may differ after replacement.
+Before reading, paths are resolved to absolute paths, including symlink targets. The tool locks the affected files during a run, stages all changes in temporary files beside their destinations, and replaces each file atomically. New credential files are created with owner-only permissions (`0600`) on Unix and a protected, current-user-only DACL on Windows. Existing Unix mode bits and Windows DACLs are preserved during replacement. The tool does not audit or repair permissions on files created by other applications.
 
 The locking files (for example, `.npmrc.node-auth.lock`) remain beside the rc files so concurrent runs can coordinate. They contain no credentials. If using local credentials, add `*.node-auth.lock` to your project `.gitignore` as desired. Replacing multiple rc files is not one filesystem-wide atomic operation; interruption between replacements can leave a partial update.
 
@@ -245,4 +245,4 @@ steps:
 
 ## License
 
-Apache-2.0
+Licensed under the [Apache License, Version 2.0](LICENSE).

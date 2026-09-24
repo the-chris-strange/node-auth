@@ -60,8 +60,6 @@ pub enum RunOutcome {
         paths: Vec<PathBuf>,
         /// Git status of the local `.npmrc` when `local_credential` was requested.
         git_status: Option<vcs::GitStatus>,
-        /// Existing credential files that were broadly readable before replacement.
-        broadly_readable: Vec<PathBuf>,
     },
 }
 
@@ -69,15 +67,10 @@ impl std::fmt::Debug for RunOutcome {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Token(_) => formatter.write_str("Token([redacted])"),
-            Self::Updated {
-                paths,
-                git_status,
-                broadly_readable,
-            } => formatter
+            Self::Updated { paths, git_status } => formatter
                 .debug_struct("Updated")
                 .field("paths", paths)
                 .field("git_status", git_status)
-                .field("broadly_readable", broadly_readable)
                 .finish(),
         }
     }
@@ -235,14 +228,6 @@ pub async fn run(options: &Options) -> Result<RunOutcome, AuthError> {
         paths.push(path.clone());
     }
     let mut transaction = fs::FileTransaction::new(&paths)?;
-    let mut broadly_readable = Vec::new();
-    for credential_path in [&cred_npmrc, cred_yarn.as_ref().unwrap_or(&cred_npmrc)] {
-        if transaction.is_broadly_readable(credential_path)?
-            && !broadly_readable.contains(credential_path)
-        {
-            broadly_readable.push(credential_path.clone());
-        }
-    }
 
     let npm_source = transaction.contents(&repo_npmrc)?.to_owned();
     let npm_target = transaction.contents(&cred_npmrc)?.to_owned();
@@ -284,10 +269,5 @@ pub async fn run(options: &Options) -> Result<RunOutcome, AuthError> {
             "No eligible Artifact Registry configuration found".to_string(),
         ));
     }
-    broadly_readable.retain(|path| paths.contains(path));
-    Ok(RunOutcome::Updated {
-        paths,
-        git_status,
-        broadly_readable,
-    })
+    Ok(RunOutcome::Updated { paths, git_status })
 }
