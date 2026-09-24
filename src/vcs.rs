@@ -28,7 +28,11 @@ pub fn find_git_repo_root(start_dir: &Path) -> Option<PathBuf> {
     if !output.status.success() {
         return None;
     }
-    Some(PathBuf::from(String::from_utf8(output.stdout).ok()?.trim()))
+    Some(
+        PathBuf::from(String::from_utf8(output.stdout).ok()?.trim())
+            .canonicalize()
+            .unwrap(),
+    )
 }
 
 /// Ask Git whether the local `.npmrc` is ignored and not tracked.
