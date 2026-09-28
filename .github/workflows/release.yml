@@ -171,6 +171,25 @@ jobs:
           --generate-notes
           --title "$TAG"
 
+  publish-packslip:
+    name: Publish Packslip manifest
+    needs:
+      - preflight
+      - github-release
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - uses: jdx/packslip@v1
+        with:
+          download: node-auth-*.tar.gz node-auth-*.zip
+          bin: node-auth artifactregistry-auth
+          tag: ${{ needs.preflight.outputs.tag }}
+          version: ${{ needs.preflight.outputs.version }}
+
   publish-homebrew:
     name: Update Homebrew tap
     needs:

@@ -13,8 +13,9 @@ dictionaries:
   - filetypes
   - git
 words:
+  - accesstoken
   - artifactregistry
-  - thiserror
   - docsrs
   - npmjs
-  - accesstoken
+  - Packslip
+  - thiserror
