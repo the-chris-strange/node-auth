@@ -275,9 +275,9 @@ Registry URLs must use HTTPS and may not contain embedded credentials, queries, 
 
 ## File Updates and Library Use
 
-Before reading, paths are resolved to absolute paths, including symlink targets. The tool locks the affected files during a run, stages all changes in temporary files beside their destinations, and replaces each file atomically. New credential files are created with owner-only permissions (`0600`) on Unix and a protected, current-user-only DACL on Windows. Existing Unix mode bits and Windows DACLs are preserved during replacement. The tool does not audit or repair permissions on files created by other applications.
+Before reading, paths are resolved to absolute paths, including symlink targets. The tool holds a process lock for each affected parent directory during a run, stages all changes in temporary files beside their destinations, and replaces each file atomically. Unix uses an advisory lock on the existing directory; Windows uses a named kernel mutex. New credential files are created with owner-only permissions (`0600`) on Unix and a protected, current-user-only DACL on Windows. Existing Unix mode bits and Windows DACLs are preserved during replacement. The tool does not audit or repair permissions on files created by other applications.
 
-The locking files (for example, `.npmrc.node-auth.lock`) remain beside the rc files so concurrent runs can coordinate. They contain no credentials. If using local credentials, add `*.node-auth.lock` to your project `.gitignore` as desired. Replacing multiple rc files is not one filesystem-wide atomic operation; interruption between replacements can leave a partial update.
+The process locks do not create lock files. Replacing multiple rc files is not one filesystem-wide atomic operation; interruption between replacements can leave a partial update.
 
 The Rust library returns `Result<RunOutcome, AuthError>` from `run(&Options)`. The outcome contains either a token for `print_token` or the paths updated and the local Git safety status.
 

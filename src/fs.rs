@@ -2,10 +2,84 @@
 
 use crate::AuthError;
 use std::collections::BTreeMap;
-use std::fs::{self, File, OpenOptions, Permissions};
+#[cfg(unix)]
+use std::fs::File;
+use std::fs::{self, Permissions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use tempfile::{Builder, NamedTempFile};
+
+#[cfg(unix)]
+mod platform_lock {
+    use std::fs::File;
+    use std::io;
+    use std::path::Path;
+
+    pub(super) struct Lock {
+        _file: File,
+    }
+
+    impl Lock {
+        pub(super) fn acquire(directory: &Path) -> io::Result<Self> {
+            let file = File::open(directory)?;
+            file.lock()?;
+            Ok(Self { _file: file })
+        }
+    }
+}
+
+#[cfg(windows)]
+mod platform_lock {
+    use std::io;
+    use std::iter;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
+    use std::path::Path;
+
+    use windows_sys::Win32::Foundation::{WAIT_ABANDONED, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Threading::{
+        CreateMutexW, INFINITE, ReleaseMutex, WaitForSingleObject,
+    };
+
+    pub(super) struct Lock(OwnedHandle);
+
+    impl Lock {
+        pub(super) fn acquire(directory: &Path) -> io::Result<Self> {
+            // Use a stable, case-insensitive hash so every node-auth process in
+            // this login session addresses the same kernel object.
+            let mut hash = 0xcbf29ce484222325_u64;
+            for unit in directory
+                .as_os_str()
+                .to_string_lossy()
+                .to_lowercase()
+                .encode_utf16()
+            {
+                hash ^= u64::from(unit);
+                hash = hash.wrapping_mul(0x100000001b3);
+            }
+            let name = format!("Local\\node-auth-directory-{hash:016x}")
+                .encode_utf16()
+                .chain(iter::once(0))
+                .collect::<Vec<_>>();
+            let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
+            if handle.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+            let handle = unsafe { OwnedHandle::from_raw_handle(handle as RawHandle) };
+            match unsafe { WaitForSingleObject(handle.as_raw_handle() as _, INFINITE) } {
+                WAIT_OBJECT_0 | WAIT_ABANDONED => Ok(Self(handle)),
+                _ => Err(io::Error::last_os_error()),
+            }
+        }
+    }
+
+    impl Drop for Lock {
+        fn drop(&mut self) {
+            unsafe {
+                ReleaseMutex(self.0.as_raw_handle() as _);
+            }
+        }
+    }
+}
 
 #[cfg(windows)]
 mod windows_security {
@@ -295,7 +369,7 @@ struct Snapshot {
 pub struct FileTransaction {
     snapshots: BTreeMap<PathBuf, Snapshot>,
     staged: BTreeMap<PathBuf, NamedTempFile>,
-    _locks: Vec<File>,
+    _locks: Vec<platform_lock::Lock>,
 }
 
 impl FileTransaction {
@@ -308,32 +382,21 @@ impl FileTransaction {
         resolved.sort();
         resolved.dedup();
 
-        let mut locks = Vec::with_capacity(resolved.len());
-        for path in &resolved {
-            let parent = path.parent().ok_or_else(|| {
-                AuthError::Config(format!("Path has no parent: {}", path.display()))
-            })?;
-            fs::create_dir_all(parent)?;
-            let file_name = path.file_name().ok_or_else(|| {
-                AuthError::Config(format!("Path has no file name: {}", path.display()))
-            })?;
-            let mut lock_name = std::ffi::OsString::new();
-            if !file_name.to_string_lossy().starts_with('.') {
-                lock_name.push(".");
-            }
-            lock_name.push(file_name);
-            lock_name.push(".node-auth.lock");
-            let lock_path = parent.join(lock_name);
-            let mut options = OpenOptions::new();
-            options.read(true).write(true).create(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
-            }
-            let lock = options.open(lock_path)?;
-            lock.lock()?;
-            locks.push(lock);
+        let mut directories = resolved
+            .iter()
+            .map(|path| {
+                path.parent().map(Path::to_path_buf).ok_or_else(|| {
+                    AuthError::Config(format!("Path has no parent: {}", path.display()))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        directories.sort();
+        directories.dedup();
+
+        let mut locks = Vec::with_capacity(directories.len());
+        for parent in directories {
+            fs::create_dir_all(&parent)?;
+            locks.push(platform_lock::Lock::acquire(&parent)?);
         }
 
         let mut snapshots = BTreeMap::new();
@@ -469,6 +532,7 @@ mod tests {
         tx.stage(&resolved, "new").unwrap();
         tx.commit().unwrap();
         assert_eq!(fs::read_to_string(path).unwrap(), "new");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 
     #[cfg(unix)]
