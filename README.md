@@ -1,5 +1,10 @@
 # node-auth
 
+[![GitHub](https://img.shields.io/badge/GitHub-the--chris--strange%2Fnode--auth-181717?logo=github)](https://github.com/the-chris-strange/node-auth)
+[![Crates.io](https://img.shields.io/crates/v/node-auth.svg)](https://crates.io/crates/node-auth)
+[![docs.rs](https://docs.rs/node-auth/badge.svg)](https://docs.rs/node-auth)
+[![CI](https://github.com/the-chris-strange/node-auth/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/the-chris-strange/node-auth/actions/workflows/ci.yml)
+
 A fast, lightweight, standalone Rust CLI and library that authenticates Node package managers (**npm**, **yarn**, and **pnpm**) to private **Google Artifact Registry (GAR)** npm repositories using **Google Cloud Application Default Credentials (ADC)**.
 
 It replicates and improves upon the functionality of Google's [`@google-cloud/artifact-registry-npm-tools`](https://github.com/GoogleCloudPlatform/artifact-registry-npm-tools), but **without requiring Node, npm, or pnpm to be installed or configured beforehand**.
