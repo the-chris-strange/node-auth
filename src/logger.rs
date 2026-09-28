@@ -46,7 +46,11 @@ pub fn init(verbose: bool) {
 pub fn present_outcome(outcome: RunOutcome) {
     match outcome {
         RunOutcome::Token(token) => println!("{token}"),
-        RunOutcome::Updated { paths, git_status } => {
+        RunOutcome::Updated {
+            paths,
+            git_status,
+            bun_env_git_status,
+        } => {
             if let Some(status) = git_status {
                 match status {
                     GitStatus::GitRepoNotIgnored => eprintln!(
@@ -59,6 +63,23 @@ pub fn present_outcome(outcome: RunOutcome) {
                     ),
                     GitStatus::Unavailable => eprintln!(
                         "{} Could not verify Git ignore status for local .npmrc.",
+                        "Warning:".yellow().bold()
+                    ),
+                    GitStatus::GitRepoIgnored => {}
+                }
+            }
+            if let Some(status) = bun_env_git_status {
+                match status {
+                    GitStatus::GitRepoNotIgnored => eprintln!(
+                        "{} .env.local is tracked or not ignored by Git; it may expose credentials if committed.",
+                        "Warning:".yellow().bold()
+                    ),
+                    GitStatus::NotGitRepo => eprintln!(
+                        "{} .env.local is outside a Git repository; keep credentials out of version control.",
+                        "Warning:".yellow().bold()
+                    ),
+                    GitStatus::Unavailable => eprintln!(
+                        "{} Could not verify Git ignore status for .env.local.",
                         "Warning:".yellow().bold()
                     ),
                     GitStatus::GitRepoIgnored => {}

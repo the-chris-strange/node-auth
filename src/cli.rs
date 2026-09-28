@@ -10,7 +10,7 @@ use std::process::ExitCode;
 #[derive(Parser, Clone, PartialEq, Eq)]
 #[command(
     name = "node-auth",
-    about = "Authenticates Node (npm, yarn, pnpm) to Google Artifact Registry using Google Cloud ADC",
+    about = "Authenticates npm, yarn, pnpm, and Bun to Google Artifact Registry using Google Cloud ADC",
     version
 )]
 pub struct Cli {
@@ -39,16 +39,30 @@ pub struct Cli {
     #[arg(long)]
     pub credential_config_yarn: Option<PathBuf>,
 
+    /// Path to the bunfig.toml file to read registry configs from.
+    /// Defaults to project-level ./bunfig.toml.
+    #[arg(long)]
+    pub repo_config_bun: Option<PathBuf>,
+
     /// Explicitly enable or disable updating Yarn configuration (.yarnrc.yml).
     /// By default, Yarn is updated if .yarnrc.yml exists or is explicitly specified.
     #[arg(long)]
     pub yarn: Option<bool>,
 
+    /// Explicitly enable or disable reading Bun configuration (bunfig.toml).
+    /// By default, Bun is enabled if ./bunfig.toml exists or is explicitly specified.
+    #[arg(long)]
+    pub bun: Option<bool>,
+
+    /// Store Bun's token in .env.local and reference NODE_AUTH_TOKEN from bunfig.toml.
+    #[arg(long, conflicts_with = "local_credential")]
+    pub bun_env: bool,
+
     /// Explicit token to use instead of querying ADC or gcloud.
     #[arg(long, env = "NODE_AUTH_TOKEN")]
     pub token: Option<String>,
 
-    /// Allow all registry domains to attach the auth token to (not only *-npm.pkg.dev).
+    /// Allow all HTTPS registry domains to receive the auth token (not only *-npm.pkg.dev).
     #[arg(long)]
     pub allow_all_domains: bool,
 
@@ -70,7 +84,10 @@ impl std::fmt::Debug for Cli {
             .field("local_credential", &self.local_credential)
             .field("repo_config_yarn", &self.repo_config_yarn)
             .field("credential_config_yarn", &self.credential_config_yarn)
+            .field("repo_config_bun", &self.repo_config_bun)
             .field("yarn", &self.yarn)
+            .field("bun", &self.bun)
+            .field("bun_env", &self.bun_env)
             .field("token", &self.token.as_ref().map(|_| "[redacted]"))
             .field("allow_all_domains", &self.allow_all_domains)
             .field("verbose", &self.verbose)
@@ -87,10 +104,13 @@ impl Cli {
             credential_config: self.credential_config.clone(),
             repo_config_yarn: self.repo_config_yarn.clone(),
             credential_config_yarn: self.credential_config_yarn.clone(),
+            repo_config_bun: self.repo_config_bun.clone(),
             local_credential: self.local_credential,
             token: self.token.clone(),
             allow_all_domains: self.allow_all_domains,
             yarn: self.yarn,
+            bun: self.bun,
+            bun_env: self.bun_env,
             print_token: self.print_token,
         }
     }
@@ -143,6 +163,27 @@ mod tests {
             Cli::try_parse_from(["node-auth", "--print-token", "--token", "custom-token"]).unwrap();
         assert!(cli.print_token);
         assert_eq!(cli.token.as_deref(), Some("custom-token"));
+    }
+
+    #[test]
+    fn test_cli_bun_flags() {
+        let cli = Cli::try_parse_from([
+            "node-auth",
+            "--bun",
+            "true",
+            "--repo-config-bun",
+            "custom-bunfig.toml",
+            "--bun-env",
+        ])
+        .unwrap();
+        assert_eq!(cli.bun, Some(true));
+        assert_eq!(
+            cli.repo_config_bun.as_deref(),
+            Some(std::path::Path::new("custom-bunfig.toml"))
+        );
+        assert!(cli.bun_env);
+
+        assert!(Cli::try_parse_from(["node-auth", "--bun-env", "--local-credential"]).is_err());
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use node_auth::{Options, run};
+use node_auth::{Options, RunOutcome, run};
 use std::fs;
 use std::process::Command;
 use tempfile::tempdir;
@@ -78,6 +78,137 @@ npmScopes:
     let yarn_content = fs::read_to_string(&cred_yarn).unwrap();
     assert!(yarn_content.contains("test-scope"));
     assert!(yarn_content.contains("npmAuthToken: yarn-token-xyz"));
+}
+
+#[tokio::test]
+async fn bun_only_registry_writes_user_npm_credentials() {
+    let dir = tempdir().unwrap();
+    let bunfig = dir.path().join("bunfig.toml");
+    let user_npmrc = dir.path().join("user.npmrc");
+    fs::write(
+        &bunfig,
+        "[install.scopes]\nmyorg = { url = \"https://us-npm.pkg.dev/project/repo/\" }\n",
+    )
+    .unwrap();
+
+    let options = Options {
+        repo_config: Some(dir.path().join("missing.npmrc")),
+        credential_config: Some(user_npmrc.clone()),
+        repo_config_bun: Some(bunfig.clone()),
+        bun: Some(true),
+        token: Some("bun-token".to_string()),
+        ..Default::default()
+    };
+    let outcome = run(&options).await.unwrap();
+    let RunOutcome::Updated { paths, .. } = outcome else {
+        panic!("expected updated outcome");
+    };
+    assert_eq!(paths, vec![user_npmrc.canonicalize().unwrap()]);
+    assert!(
+        fs::read_to_string(user_npmrc)
+            .unwrap()
+            .contains("//us-npm.pkg.dev/project/repo/:_authToken=\"bun-token\"")
+    );
+    assert!(!fs::read_to_string(bunfig).unwrap().contains("bun-token"));
+}
+
+#[tokio::test]
+async fn bun_env_updates_bunfig_and_private_env_file() {
+    let dir = tempdir().unwrap();
+    let bunfig = dir.path().join("bunfig.toml");
+    let env_file = dir.path().join(".env.local");
+    let source = "# keep\n[install.scopes]\nmyorg = { url = 'https://us-npm.pkg.dev/project/repo', username = \"old\", password = \"old\" }\n";
+    fs::write(&bunfig, source).unwrap();
+    fs::write(&env_file, "OTHER=value\nNODE_AUTH_TOKEN=old\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&env_file, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    let options = Options {
+        repo_config: Some(dir.path().join("missing.npmrc")),
+        credential_config: Some(dir.path().join("user.npmrc")),
+        repo_config_bun: Some(bunfig.clone()),
+        bun_env: true,
+        token: Some("fresh-bun-token".to_string()),
+        ..Default::default()
+    };
+    let outcome = run(&options).await.unwrap();
+    let RunOutcome::Updated { paths, .. } = outcome else {
+        panic!("expected updated outcome");
+    };
+    assert_eq!(paths.len(), 2);
+    let updated_bunfig = fs::read_to_string(&bunfig).unwrap();
+    assert!(updated_bunfig.starts_with("# keep\n"));
+    assert!(updated_bunfig.contains("token = \"$NODE_AUTH_TOKEN\""));
+    assert!(!updated_bunfig.contains("fresh-bun-token"));
+    assert!(!updated_bunfig.contains("username"));
+    assert!(!updated_bunfig.contains("password"));
+    let updated_env = fs::read_to_string(&env_file).unwrap();
+    assert!(updated_env.contains("OTHER=value\n"));
+    assert!(updated_env.contains("NODE_AUTH_TOKEN=fresh-bun-token\n"));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(env_file).unwrap().permissions().mode() & 0o077,
+            0
+        );
+    }
+}
+
+#[tokio::test]
+async fn bun_env_and_local_credential_are_rejected_without_writes() {
+    let dir = tempdir().unwrap();
+    let bunfig = dir.path().join("bunfig.toml");
+    fs::write(
+        &bunfig,
+        "[install.scopes]\nmyorg = \"https://us-npm.pkg.dev/project/repo\"\n",
+    )
+    .unwrap();
+    let options = Options {
+        repo_config_bun: Some(bunfig.clone()),
+        bun_env: true,
+        local_credential: true,
+        token: Some("token".to_string()),
+        ..Default::default()
+    };
+    let error = run(&options).await.unwrap_err();
+    assert!(error.to_string().contains("cannot be used"));
+    assert!(!dir.path().join(".env.local").exists());
+}
+
+#[tokio::test]
+async fn invalid_bunfig_preserves_existing_npm_credentials() {
+    let dir = tempdir().unwrap();
+    let bunfig = dir.path().join("bunfig.toml");
+    let project_npmrc = dir.path().join("project.npmrc");
+    let user_npmrc = dir.path().join("user.npmrc");
+    fs::write(&bunfig, "[install.scopes\n").unwrap();
+    fs::write(
+        &project_npmrc,
+        "@scope:registry=https://us-npm.pkg.dev/project/repo/\n",
+    )
+    .unwrap();
+    fs::write(&user_npmrc, "keep=true\n").unwrap();
+
+    let options = Options {
+        repo_config: Some(project_npmrc.clone()),
+        credential_config: Some(user_npmrc.clone()),
+        repo_config_bun: Some(bunfig.clone()),
+        bun: Some(true),
+        token: Some("token".to_string()),
+        ..Default::default()
+    };
+    assert!(run(&options).await.is_err());
+    assert_eq!(
+        fs::read_to_string(project_npmrc).unwrap(),
+        "@scope:registry=https://us-npm.pkg.dev/project/repo/\n"
+    );
+    assert_eq!(fs::read_to_string(user_npmrc).unwrap(), "keep=true\n");
+    assert_eq!(fs::read_to_string(bunfig).unwrap(), "[install.scopes\n");
 }
 
 #[tokio::test]

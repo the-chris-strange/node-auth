@@ -27,6 +27,10 @@ pub enum AuthError {
         source: yaml_edit::YamlError,
     },
 
+    /// Invalid Bun configuration.
+    #[error("TOML parse error in bunfig.toml: {0}")]
+    TomlInput(#[from] toml_edit::TomlError),
+
     /// Regular expression compilation or matching error.
     #[error("Regex error: {0}")]
     Regex(#[from] regex::Error),

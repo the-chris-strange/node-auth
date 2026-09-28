@@ -5,7 +5,7 @@
 
 use crate::error::AuthError;
 use crate::fs::{FileTransaction, resolve};
-use crate::registry::RegistryPolicy;
+use crate::registry::{RegistryPolicy, RegistryUrl};
 use crate::token::validate_token;
 use regex::Regex;
 use std::collections::BTreeMap;
@@ -195,6 +195,25 @@ pub fn transform_npmrc_contents(
     allow_all_domains: bool,
     same_file: bool,
 ) -> Result<(String, String), AuthError> {
+    transform_npmrc_contents_with_registries(
+        from_content,
+        to_content,
+        creds,
+        allow_all_domains,
+        same_file,
+        &[],
+    )
+}
+
+/// Transform npm configuration and attach credentials for additional discovered registries.
+pub(crate) fn transform_npmrc_contents_with_registries(
+    from_content: &str,
+    to_content: &str,
+    creds: &str,
+    allow_all_domains: bool,
+    same_file: bool,
+    additional_registries: &[RegistryUrl],
+) -> Result<(String, String), AuthError> {
     validate_token(creds)?;
     let parser = NpmrcParser::new(allow_all_domains)?;
     let mut registries_found = BTreeMap::new();
@@ -244,6 +263,12 @@ pub fn transform_npmrc_contents(
                 registries_found.entry(registry).or_insert(scope);
             }
         }
+    }
+
+    for registry in additional_registries {
+        registries_found
+            .entry(registry.npm_key().to_string())
+            .or_insert(None);
     }
 
     if registries_found.is_empty() {

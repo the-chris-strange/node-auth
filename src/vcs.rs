@@ -35,8 +35,8 @@ pub fn find_git_repo_root(start_dir: &Path) -> Option<PathBuf> {
     )
 }
 
-/// Ask Git whether the local `.npmrc` is ignored and not tracked.
-pub fn check_git_status(dir: &Path) -> GitStatus {
+/// Ask Git whether a repository-relative credential file is ignored and untracked.
+pub fn check_path_status(dir: &Path, path: &Path) -> GitStatus {
     let repo = match Command::new("git")
         .arg("-C")
         .arg(dir)
@@ -56,7 +56,8 @@ pub fn check_git_status(dir: &Path) -> GitStatus {
     let tracked = Command::new("git")
         .arg("-C")
         .arg(dir)
-        .args(["ls-files", "--error-unmatch", "--", ".npmrc"])
+        .args(["ls-files", "--error-unmatch", "--"])
+        .arg(path)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
@@ -69,7 +70,8 @@ pub fn check_git_status(dir: &Path) -> GitStatus {
     match Command::new("git")
         .arg("-C")
         .arg(dir)
-        .args(["check-ignore", "-q", "--", ".npmrc"])
+        .args(["check-ignore", "-q", "--"])
+        .arg(path)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -78,6 +80,11 @@ pub fn check_git_status(dir: &Path) -> GitStatus {
         Ok(status) if status.code() == Some(1) => GitStatus::GitRepoNotIgnored,
         _ => GitStatus::Unavailable,
     }
+}
+
+/// Ask Git whether the local `.npmrc` is ignored and not tracked.
+pub fn check_git_status(dir: &Path) -> GitStatus {
+    check_path_status(dir, Path::new(".npmrc"))
 }
 
 /// Return the Git safety status without emitting terminal output.
@@ -108,6 +115,11 @@ mod tests {
         assert_eq!(
             find_git_repo_root(dir.path()).unwrap(),
             dir.path().canonicalize().unwrap()
+        );
+
+        assert_eq!(
+            check_path_status(dir.path(), Path::new(".env.local")),
+            GitStatus::GitRepoNotIgnored
         );
     }
 }
