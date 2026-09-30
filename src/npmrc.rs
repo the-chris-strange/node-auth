@@ -274,9 +274,9 @@ pub(crate) fn transform_npmrc_contents_with_registries(
   if registries_found.is_empty() {
     return Err(AuthError::Config(
       "No Artifact Registry configuration found.\n\
-             Ensure your .npmrc contains a registry line such as:\n\
-             @my-scope:registry=https://<region>-npm.pkg.dev/<project>/<repo>/\n\
-             Run `gcloud artifacts print-settings npm` to generate configuration."
+        Ensure your .npmrc contains a registry line such as:\n\
+        @my-scope:registry=https://<region>-npm.pkg.dev/<project>/<repo>/\n\
+        Run `gcloud artifacts print-settings npm` to generate configuration."
         .to_string(),
     ));
   }

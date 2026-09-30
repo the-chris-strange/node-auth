@@ -1,4 +1,4 @@
-//! Yarn Berry / Yarn Modern (`.yarnrc.yml`) configuration management.
+//! Yarn (`.yarnrc.yml`) configuration management.
 //!
 //! Handles parsing, updating, and writing `npmScopes` authentication entries
 //! (`npmAlwaysAuth` and `npmAuthToken`) in `.yarnrc.yml` files.
@@ -11,7 +11,7 @@ use std::path::Path;
 use std::str::FromStr;
 use yaml_edit::{Mapping, YamlFile};
 
-/// Transforms Yarn Modern (`.yarnrc.yml`) content in memory to insert authentication tokens for detected scopes.
+/// Transforms Yarn (`.yarnrc.yml`) content in memory to insert authentication tokens for detected scopes.
 ///
 /// # Arguments
 ///

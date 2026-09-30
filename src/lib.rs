@@ -16,7 +16,7 @@
 //!   user-level `~/.npmrc` by default, preventing sensitive tokens from being checked into source control.
 //! - **Git Safety Checks**: When `--local-credential` is used, checks `.gitignore` and emits warnings if `.npmrc`
 //!   is not properly ignored.
-//! - **Yarn Modern Support**: Detects and updates `npmScopes` authentication in `.yarnrc.yml`.
+//! - **Yarn Support**: Detects and updates `npmScopes` authentication in `.yarnrc.yml`.
 //! - **Bun Support**: Discovers registries in `bunfig.toml` and optionally manages a local
 //!   `.env.local` token reference.
 //!

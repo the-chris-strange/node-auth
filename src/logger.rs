@@ -1,4 +1,4 @@
-//! CLI-only logging and presentation. Library operations never initialize this logger.
+//! CLI-only logging and presentation.
 
 use crate::vcs::GitStatus;
 use crate::{AuthError, RunOutcome};

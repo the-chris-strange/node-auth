@@ -83,7 +83,7 @@ mise use -g packslip:github.com/the-chris-strange/node-auth@latest
 To install and pin `node-auth` for a project, run this from the project directory:
 
 ```bash
-mise use packslip:github.com/the-chris-strange/node-auth@0.1.0
+mise use packslip:github.com/the-chris-strange/node-auth@0.2.0
 ```
 
 ### GitHub Releases

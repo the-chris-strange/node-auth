@@ -4,18 +4,25 @@ ignorePaths:
   - cspell.config.yaml
   - target
 dictionaries:
-  - rust
-  - google
-  - npm
-  - softwareTerms
-  - fullstack
   - computing-acronyms
   - filetypes
+  - fullstack
   - git
+  - google
+  - npm
+  - rust
+  - softwareTerms
 words:
   - accesstoken
   - artifactregistry
+  - bunfig
   - docsrs
   - npmjs
-  - Packslip
+  - packslip
   - thiserror
+  - unmatch
+ignoreWords:
+  - creds
+  - dacl
+  - myorg
+  - userprofile
