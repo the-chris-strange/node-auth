@@ -1,6 +1,6 @@
 [package]
 name = "node-auth"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "Authenticate npm, yarn, pnpm, and Bun to Google Artifact Registry using Google Cloud ADC"
 readme = "README.md"
