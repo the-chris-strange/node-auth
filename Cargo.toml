@@ -1,6 +1,6 @@
 [package]
 name = "node-auth"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Authenticate npm, yarn, pnpm, and Bun to Google Artifact Registry using Google Cloud ADC"
 readme = "README.md"
@@ -14,6 +14,10 @@ exclude = [".github/", "scripts/"]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
+[features]
+default = ["cli"]
+cli = ["dep:clap", "dep:colored", "tokio/macros", "tokio/rt-multi-thread"]
+
 [lib]
 name = "node_auth"
 path = "src/lib.rs"
@@ -21,21 +25,23 @@ path = "src/lib.rs"
 [[bin]]
 name = "node-auth"
 path = "src/main.rs"
+required-features = ["cli"]
 
 [[bin]]
 name = "artifactregistry-auth"
 path = "src/bin/artifactregistry_auth.rs"
+required-features = ["cli"]
 
 [dependencies]
-clap = { version = "4.5", features = ["derive", "env"] }
-colored = "3.1"
+clap = { version = "4.5", features = ["derive", "env"], optional = true }
+colored = { version = "3.1", optional = true }
 dirs = "7.0"
 gcp_auth = "0.12"
 log = "0.4"
 regex = "1.10"
 tempfile = "3.10"
 thiserror = "2.0"
-tokio = { version = "1.38", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.38", features = ["rt", "net", "time"] }
 toml_edit = "0.23"
 url = "2.5"
 yaml-edit = "0.3.2"
@@ -48,3 +54,6 @@ windows-sys = { version = "0.61", features = [
     "Win32_Storage_FileSystem",
     "Win32_System_Threading",
 ] }
+
+[dev-dependencies]
+tokio = { version = "1.38", features = ["macros", "rt-multi-thread"] }

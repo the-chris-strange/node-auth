@@ -20,6 +20,11 @@
 //! - **Bun Support**: Discovers registries in `bunfig.toml` and optionally manages a local
 //!   `.env.local` token reference.
 //!
+//! The `cli` feature is enabled by default and provides both executables and the CLI modules.
+//! Library consumers can disable it with `default-features = false` to omit CLI dependencies.
+//! The example below requires Tokio with the `macros` and `rt-multi-thread` features in the
+//! consuming application.
+//!
 //! ### Library Usage Example
 //!
 //! ```no_run
@@ -40,9 +45,11 @@
 
 pub mod auth;
 pub mod bunfig;
+#[cfg(feature = "cli")]
 pub mod cli;
 pub mod error;
 pub mod fs;
+#[cfg(feature = "cli")]
 pub mod logger;
 pub mod npmrc;
 pub mod registry;
@@ -375,4 +382,99 @@ pub async fn run(options: &Options) -> Result<RunOutcome, AuthError> {
     git_status,
     bun_env_git_status,
   })
+}
+
+/// Executes authentication synchronously using a temporary Tokio runtime.
+///
+/// This helper works without the `cli` feature or any runtime setup by the caller.
+/// Each call creates a current-thread runtime with I/O and timers enabled, runs
+/// [`run`], and drops the runtime before returning. It does not initialize logging
+/// or print the outcome.
+///
+/// Call this from synchronous code. Within an async Tokio context, use [`run`]
+/// directly. Threads entered into a Tokio runtime, including `spawn_blocking`
+/// threads, are rejected.
+///
+/// # Errors
+///
+/// Returns [`AuthError::Config`] when called within an active Tokio runtime,
+/// [`AuthError::Io`] if runtime creation fails, or any error returned by [`run`].
+///
+/// # Example
+///
+/// ```no_run
+/// use node_auth::{run_blocking, Options};
+///
+/// fn main() -> Result<(), node_auth::AuthError> {
+///     let outcome = run_blocking(&Options::default())?;
+///     // Handle the returned token or updated configuration paths.
+///     Ok(())
+/// }
+/// ```
+pub fn run_blocking(options: &Options) -> Result<RunOutcome, AuthError> {
+  if tokio::runtime::Handle::try_current().is_ok() {
+    return Err(AuthError::Config(
+      "run_blocking cannot be called within an active Tokio runtime; use run().await".to_string(),
+    ));
+  }
+  let runtime = tokio::runtime::Builder::new_current_thread()
+    .enable_all()
+    .build()?;
+  runtime.block_on(run(options))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn blocking_run_returns_token_and_propagates_errors() {
+    let mut options = Options {
+      token: Some("valid-token".to_string()),
+      print_token: true,
+      ..Default::default()
+    };
+    assert!(
+      matches!(run_blocking(&options).unwrap(), RunOutcome::Token(token) if token == "valid-token")
+    );
+    options.token = Some("invalid\ntoken".to_string());
+    assert!(run_blocking(&options).is_err());
+  }
+
+  #[test]
+  fn blocking_run_updates_configuration_without_cli() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("project.npmrc");
+    let target = dir.path().join("user.npmrc");
+    std::fs::write(&source, "registry=https://us-npm.pkg.dev/project/repo/\n").unwrap();
+    let options = Options {
+      token: Some("valid-token".to_string()),
+      repo_config: Some(source),
+      credential_config: Some(target.clone()),
+      yarn: Some(false),
+      bun: Some(false),
+      ..Default::default()
+    };
+    assert!(
+      matches!(run_blocking(&options).unwrap(), RunOutcome::Updated { paths, .. } if paths.contains(&fs::resolve(&target).unwrap()))
+    );
+    assert!(
+      std::fs::read_to_string(target)
+        .unwrap()
+        .contains("//us-npm.pkg.dev/project/repo/:_authToken=\"valid-token\"")
+    );
+  }
+
+  #[tokio::test]
+  async fn blocking_run_rejects_nested_runtime_without_panicking() {
+    let options = Options {
+      token: Some("valid-token".to_string()),
+      print_token: true,
+      ..Default::default()
+    };
+    assert!(
+      matches!(run_blocking(&options), Err(AuthError::Config(message)) if message.contains("active Tokio runtime"))
+    );
+    assert!(matches!(run(&options).await.unwrap(), RunOutcome::Token(_)));
+  }
 }

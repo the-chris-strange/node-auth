@@ -279,6 +279,31 @@ Before reading, paths are resolved to absolute paths, including symlink targets.
 
 The process locks do not create lock files. Replacing multiple rc files is not one filesystem-wide atomic operation; interruption between replacements can leave a partial update.
 
+The `cli` Cargo feature is enabled by default. It includes both executables (`node-auth` and `artifactregistry-auth`), the CLI modules, and their argument parsing, terminal color, and runtime dependencies. For library-only use, disable default features:
+
+```toml
+[dependencies]
+node-auth = { version = "0.1.0", default-features = false }
+```
+
+For synchronous applications, `run_blocking(&Options)` creates and manages a temporary Tokio runtime. No Tokio dependency or runtime configuration is needed in your application:
+
+```rust
+use node_auth::{run_blocking, Options};
+
+fn main() -> Result<(), node_auth::AuthError> {
+    let outcome = run_blocking(&Options::default())?;
+    // Handle the returned token or updated configuration paths.
+    Ok(())
+}
+```
+
+Each call creates a current-thread runtime with networking and timers enabled and drops it before returning. The helper returns errors and outcomes without initializing logging or printing output.
+
+Async applications should call `run(&Options).await` within their Tokio runtime. Calling `run_blocking` inside an active Tokio runtime returns an error; use `run().await` instead. This guard also rejects Tokio blocking-pool threads.
+
+Tokio is a library dependency for the blocking helper and Google authentication. The `cli` feature additionally enables Tokio's macros and multithreaded runtime.
+
 The Rust library returns `Result<RunOutcome, AuthError>` from `run(&Options)`. The outcome contains either a token for `print_token` or the paths updated and the local Git safety status.
 
 ## Maintainer Releases

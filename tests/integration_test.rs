@@ -1,5 +1,6 @@
 use node_auth::{Options, RunOutcome, run};
 use std::fs;
+#[cfg(feature = "cli")]
 use std::process::Command;
 use tempfile::tempdir;
 
@@ -306,6 +307,7 @@ async fn yarn_does_not_attach_token_to_other_registry_without_override() {
   );
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn both_cli_names_share_presentation_and_keep_errors_on_stderr() {
   for binary in [
@@ -341,6 +343,7 @@ fn both_cli_names_share_presentation_and_keep_errors_on_stderr() {
   }
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn compatibility_binary_accepts_official_yarn_flags_without_npm_config() {
   let dir = tempdir().unwrap();
