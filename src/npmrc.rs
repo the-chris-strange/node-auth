@@ -179,7 +179,7 @@ pub fn has_registry(
 /// * `to_content` - Raw text of the target credential `.npmrc`.
 /// * `creds` - The OAuth2 access token to insert.
 /// * `allow_all_domains` - Whether non-GAR domains are allowed for authentication.
-/// * `same_file` - True if reading and writing to the exact same file (e.g. `--local-credential`).
+/// * `same_file` - True if reading and writing to the exact same file.
 ///
 /// # Returns
 ///
@@ -187,7 +187,7 @@ pub fn has_registry(
 ///
 /// # Errors
 ///
-/// Returns [`AuthError::Config`] if no Artifact Registry configurations were found in the input.
+/// Returns [`AuthError::NoNpmRegistry`] if no eligible registry configurations were found in the input.
 pub fn transform_npmrc_contents(
   from_content: &str,
   to_content: &str,
@@ -272,13 +272,7 @@ pub(crate) fn transform_npmrc_contents_with_registries(
   }
 
   if registries_found.is_empty() {
-    return Err(AuthError::Config(
-      "No Artifact Registry configuration found.\n\
-        Ensure your .npmrc contains a registry line such as:\n\
-        @my-scope:registry=https://<region>-npm.pkg.dev/<project>/<repo>/\n\
-        Run `gcloud artifacts print-settings npm` to generate configuration."
-        .to_string(),
-    ));
+    return Err(AuthError::NoNpmRegistry);
   }
 
   // Prepare credentials to write to to_content
@@ -341,7 +335,7 @@ pub(crate) fn transform_npmrc_contents_with_registries(
 /// * `allow_all_domains` - Whether to allow non-pkg.dev domains.
 /// # Errors
 ///
-/// Returns [`AuthError::Io`] if reading or writing files fails, or [`AuthError::Config`] if no registry was found.
+/// Returns [`AuthError::Io`] if reading or writing files fails, or [`AuthError::NoNpmRegistry`] if no registry was found.
 pub fn update_npmrc_configs(
   from_path: &Path,
   to_path: &Path,
@@ -380,6 +374,14 @@ mod tests {
   use super::*;
   use std::fs;
   use tempfile::tempdir;
+
+  #[test]
+  fn missing_registry_returns_dedicated_error() {
+    assert!(matches!(
+      transform_npmrc_contents("", "", "valid-token", false, false),
+      Err(AuthError::NoNpmRegistry)
+    ));
+  }
 
   #[test]
   fn test_parser_standard_ar() {

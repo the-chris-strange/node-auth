@@ -1,7 +1,7 @@
 //! Google Cloud credential retrieval and authentication handling.
 //!
 //! Supports obtaining OAuth2 access tokens through multiple strategies:
-//! 1. Explicitly supplied tokens (via flag or `NODE_AUTH_TOKEN` environment variable).
+//! 1. Explicitly supplied tokens.
 //! 2. Google Application Default Credentials (ADC) via service accounts or user login.
 //! 3. Active `gcloud` CLI session fallback (`gcloud auth print-access-token`).
 
@@ -23,7 +23,7 @@ const CLOUD_PLATFORM_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platfo
 /// * `explicit_token` - Optional override token passed by the user.
 /// # Errors
 ///
-/// Returns [`AuthError::Authentication`] if credential resolution fails, or
+/// Returns [`AuthError::CredentialsUnavailable`] if both credential providers fail, or
 /// [`AuthError::Config`] if an explicit token is invalid.
 ///
 /// # Example
@@ -64,14 +64,7 @@ pub async fn get_credentials(explicit_token: Option<&str>) -> Result<String, Aut
     }
   }
 
-  // 3. Both failed - return actionable error
-  Err(AuthError::Authentication(
-    "Failed to get credentials. Please run:\n\
-         • `gcloud auth application-default login`\n\
-         • `gcloud auth login`\n\
-         or export `GOOGLE_APPLICATION_CREDENTIALS=<path/to/service/account/key.json>`"
-      .to_string(),
-  ))
+  Err(AuthError::CredentialsUnavailable)
 }
 
 async fn get_adc_credentials() -> Result<String, AuthError> {

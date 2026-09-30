@@ -176,7 +176,10 @@ async fn bun_env_and_local_credential_are_rejected_without_writes() {
     ..Default::default()
   };
   let error = run(&options).await.unwrap_err();
-  assert!(error.to_string().contains("cannot be used"));
+  assert!(matches!(
+    error,
+    node_auth::AuthError::BunEnvLocalCredentialConflict
+  ));
   assert!(!dir.path().join(".env.local").exists());
 }
 

@@ -98,5 +98,81 @@ pub fn present_outcome(outcome: RunOutcome) {
 
 /// Present one CLI error on stderr.
 pub fn present_error(error: &AuthError) {
-  eprintln!("{} {error}", "Error:".red().bold());
+  eprintln!("{} {}", "Error:".red().bold(), format_error(error));
+}
+
+// Keep remediation and command-line option names in the CLI presentation layer.
+fn format_error(error: &AuthError) -> String {
+  match error {
+    AuthError::NoNpmRegistry => format!(
+      "{error}.\n\
+       Ensure your .npmrc contains a registry line such as:\n\
+       @my-scope:registry=https://<region>-npm.pkg.dev/<project>/<repo>/\n\
+       Run `gcloud artifacts print-settings npm` to generate configuration."
+    ),
+    AuthError::CredentialsUnavailable => format!(
+      "{error}.\n\
+       Please run:\n\
+       • `gcloud auth application-default login`\n\
+       • `gcloud auth login`\n\
+       or export `GOOGLE_APPLICATION_CREDENTIALS=<path/to/service/account/key.json>`"
+    ),
+    AuthError::BunEnvLocalCredentialConflict => {
+      "Configuration error: --bun-env cannot be used with --local-credential".to_string()
+    }
+    AuthError::BunEnvDisabledConflict => {
+      "Configuration error: --bun-env cannot be used with --bun false".to_string()
+    }
+    _ => error.to_string(),
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn npm_guidance_has_explicit_line_layout() {
+    assert_eq!(
+      format_error(&AuthError::NoNpmRegistry),
+      concat!(
+        "Configuration error: No eligible registry configuration found in .npmrc.\n",
+        "Ensure your .npmrc contains a registry line such as:\n",
+        "@my-scope:registry=https://<region>-npm.pkg.dev/<project>/<repo>/\n",
+        "Run `gcloud artifacts print-settings npm` to generate configuration."
+      )
+    );
+  }
+
+  #[test]
+  fn authentication_guidance_has_explicit_line_layout() {
+    assert_eq!(
+      format_error(&AuthError::CredentialsUnavailable),
+      concat!(
+        "Authentication error: Failed to get credentials from ADC or gcloud.\n",
+        "Please run:\n",
+        "• `gcloud auth application-default login`\n",
+        "• `gcloud auth login`\n",
+        "or export `GOOGLE_APPLICATION_CREDENTIALS=<path/to/service/account/key.json>`"
+      )
+    );
+  }
+
+  #[test]
+  fn option_conflicts_use_cli_flag_names() {
+    assert_eq!(
+      format_error(&AuthError::BunEnvLocalCredentialConflict),
+      "Configuration error: --bun-env cannot be used with --local-credential"
+    );
+    assert_eq!(
+      format_error(&AuthError::BunEnvDisabledConflict),
+      "Configuration error: --bun-env cannot be used with --bun false"
+    );
+  }
+
+  #[test]
+  fn ordinary_errors_keep_their_diagnostic() {
+    let error = AuthError::Config("Invalid registry URL".to_string());
+    assert_eq!(format_error(&error), error.to_string());
+  }
 }

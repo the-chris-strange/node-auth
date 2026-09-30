@@ -14,8 +14,8 @@
 //!   and falls back to `gcloud auth print-access-token`.
 //! - **Credential Isolation**: Reads registry endpoints from project-level `.npmrc` and writes secrets to
 //!   user-level `~/.npmrc` by default, preventing sensitive tokens from being checked into source control.
-//! - **Git Safety Checks**: When `--local-credential` is used, checks `.gitignore` and emits warnings if `.npmrc`
-//!   is not properly ignored.
+//! - **Git Safety Checks**: Reports Git ignore status when local credentials are requested,
+//!   allowing callers to warn when `.npmrc` is not properly ignored.
 //! - **Yarn Support**: Detects and updates `npmScopes` authentication in `.yarnrc.yml`.
 //! - **Bun Support**: Discovers registries in `bunfig.toml` and optionally manages a local
 //!   `.env.local` token reference.
@@ -172,14 +172,10 @@ impl std::fmt::Debug for Options {
 /// or no Artifact Registry configuration is discovered.
 pub async fn run(options: &Options) -> Result<RunOutcome, AuthError> {
   if options.bun_env && options.local_credential {
-    return Err(AuthError::Config(
-      "--bun-env cannot be used with --local-credential".to_string(),
-    ));
+    return Err(AuthError::BunEnvLocalCredentialConflict);
   }
   if options.bun_env && options.bun == Some(false) {
-    return Err(AuthError::Config(
-      "--bun-env cannot be used with --bun false".to_string(),
-    ));
+    return Err(AuthError::BunEnvDisabledConflict);
   }
   let token = auth::get_credentials(options.token.as_deref()).await?;
   token::validate_token(&token)?;
@@ -426,6 +422,28 @@ pub fn run_blocking(options: &Options) -> Result<RunOutcome, AuthError> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[tokio::test]
+  async fn bun_option_conflicts_return_dedicated_errors() {
+    let options = Options {
+      bun_env: true,
+      local_credential: true,
+      ..Options::default()
+    };
+    assert!(matches!(
+      run(&options).await,
+      Err(AuthError::BunEnvLocalCredentialConflict)
+    ));
+    let options = Options {
+      local_credential: false,
+      bun: Some(false),
+      ..options
+    };
+    assert!(matches!(
+      run(&options).await,
+      Err(AuthError::BunEnvDisabledConflict)
+    ));
+  }
 
   #[test]
   fn blocking_run_returns_token_and_propagates_errors() {
