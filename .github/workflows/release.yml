@@ -138,7 +138,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: release
     permissions:
+      attestations: write
       contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -161,34 +163,25 @@ jobs:
             --version "$VERSION" \
             --artifacts dist \
             --output dist/packages
+      - name: Create signed Packslip manifest
+        id: packslip
+        uses: jdx/packslip@v1
+        with:
+          artifacts: dist/node-auth-*.tar.gz dist/node-auth-*.zip
+          bin: node-auth artifactregistry-auth
+          tag: ${{ needs.preflight.outputs.tag }}
+          version: ${{ needs.preflight.outputs.version }}
+          upload: "false"
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.preflight.outputs.tag }}
+          PACKSLIP_BUNDLE: ${{ steps.packslip.outputs.bundle }}
         run: >-
-          gh release create "$TAG" dist/node-auth-* dist/SHA256SUMS dist/packages/*
+          gh release create "$TAG" dist/node-auth-* dist/SHA256SUMS dist/packages/* "$PACKSLIP_BUNDLE"
           --verify-tag
           --generate-notes
           --title "$TAG"
-
-  publish-packslip:
-    name: Publish Packslip manifest
-    needs:
-      - preflight
-      - github-release
-    runs-on: ubuntu-latest
-    environment: release
-    permissions:
-      attestations: write
-      contents: write
-      id-token: write
-    steps:
-      - uses: jdx/packslip@v1
-        with:
-          download: node-auth-*.tar.gz node-auth-*.zip
-          bin: node-auth artifactregistry-auth
-          tag: ${{ needs.preflight.outputs.tag }}
-          version: ${{ needs.preflight.outputs.version }}
 
   publish-homebrew:
     name: Update Homebrew tap
