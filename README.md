@@ -53,7 +53,7 @@ Google's official `google-artifactregistry-auth` tool is distributed as an npm p
 cargo install node-auth --locked
 ```
 
-This installs both `node-auth` and the compatibility command `artifactregistry-auth`.
+This installs `node-auth`, the compatibility command `artifactregistry-auth`, and the token helper `node-auth-token`.
 
 ### Homebrew
 
@@ -102,7 +102,7 @@ This installs both `node-auth` and the drop-in alias `artifactregistry-auth` to 
 
 ```bash
 cargo build --release
-# Binaries available in target/release/node-auth and target/release/artifactregistry-auth
+# Binaries: target/release/{node-auth,artifactregistry-auth,node-auth-token}
 ```
 
 ### Generating API Documentation
@@ -133,10 +133,10 @@ node-auth
 
 By default:
 
-- Reads registry configurations from `./.npmrc` (or `~/.npmrc` if no local file exists).
-- If `./bunfig.toml` exists, reads Bun registry configurations from `install.registry` and `install.scopes`.
+- Reads registry configurations from `.npmrc` (or `~/.npmrc` if no local file exists).
+- If `bunfig.toml` exists, reads Bun registry configurations from `install.registry` and `install.scopes`.
 - Writes the authentication token to your user-level `~/.npmrc` (`%USERPROFILE%\.npmrc` on Windows) so secret tokens are never accidentally committed to Git.
-- If `./.yarnrc.yml` exists, also updates Yarn's scope credentials.
+- If `.yarnrc.yml` exists, also updates Yarn's scope credentials.
 
 ### Bun Environment File (`--bun-env`)
 
@@ -196,6 +196,90 @@ export NPM_TOKEN=$(node-auth --print-token)
 ```
 
 ---
+
+### Dynamic pnpm Authentication
+
+With pnpm **11.13.0 or newer**, configure authentication once in each project or workspace whose GAR repositories you use:
+
+```bash
+gcloud auth application-default login
+node-auth configure pnpm
+pnpm install
+```
+
+Install all three executables (`node-auth`, `artifactregistry-auth`, and `node-auth-token`). Cargo, native release archives, Homebrew, Scoop, and Packslip include the helper. The command resolves the installed helper beside `node-auth`, then searches absolute directories on `PATH`. To select another installation:
+
+```bash
+node-auth configure pnpm --token-helper /absolute/path/to/node-auth-token
+node-auth configure pnpm --repo-config /path/to/another.npmrc
+node-auth configure pnpm --help
+```
+
+`node-auth-token` is an argument-free executable that shares the library's `--print-token` path. It prints only an access token and a newline, sends errors to stderr, exits nonzero on failure, and never modifies configuration files. It uses `NODE_AUTH_TOKEN` if set; otherwise it obtains Google ADC and retains the existing `gcloud auth print-access-token` fallback. For automatic refresh, leave `NODE_AUTH_TOKEN` unset. The helper also builds with `--no-default-features`, without Clap or the colored CLI presentation dependencies.
+
+The configuration command does not authenticate. It discovers literal HTTPS GAR registry URLs from:
+
+- The workspace root `.npmrc`, or the nearest package root `.npmrc` when there is no workspace; otherwise the current directory's `.npmrc`.
+- The effective user `.npmrc` (including `PNPM_CONFIG_NPMRC_AUTH_FILE`, `PNPM_CONFIG_USERCONFIG`, global `npmrcAuthFile`, and `NPM_CONFIG_USERCONFIG`).
+- An additional `.npmrc` passed with `--repo-config`.
+- `registry` and `registries` in `pnpm-workspace.yaml` and global `config.yaml`. Both scope-to-URL mappings and URL-keyed registry declarations are recognized.
+- Registry definitions in the existing pnpm `auth.ini`.
+
+Yarn and Bun files are not pnpm registry sources. Unresolved environment-variable URLs and unsupported registry shapes produce errors; expand them to literal URLs before configuring. Registry routing from command-line options, environment variables, named registries, or external configuration extensions must first be expressed in one of the supported files. Configuration remains GAR-only; this command does not accept `--allow-all-domains` or the static credential flags.
+
+The only file written is pnpm's trusted user-level `auth.ini`:
+
+| Platform | Location |
+| --- | --- |
+| Any platform with `XDG_CONFIG_HOME` | `$XDG_CONFIG_HOME/pnpm/auth.ini` |
+| macOS | `~/Library/Preferences/pnpm/auth.ini` |
+| Linux | `~/.config/pnpm/auth.ini` |
+| Windows | `%LOCALAPPDATA%/pnpm/config/auth.ini` (normally `~/AppData/Local/pnpm/config/auth.ini`) |
+
+Windows falls back to `~/.config/pnpm/auth.ini` when `LOCALAPPDATA` is unavailable, matching pnpm. `XDG_CONFIG_HOME` must be absolute. Destinations resolving inside the project, including through symlinks, are rejected.
+
+For example, the command writes:
+
+```ini
+//us-central1-npm.pkg.dev/my-project/my-repo/:tokenHelper=/absolute/path/to/node-auth-token
+```
+
+It preserves comments, unrelated settings, line endings, and static credentials. It updates existing helper paths, collapses duplicate entries for the selected repositories, and leaves an already configured file untouched. Re-run the command after moving the helper or adding GAR repositories. File updates use the existing locking, atomic replacement, and permission-preservation code.
+
+pnpm loads project `.npmrc` settings ahead of `auth.ini`, then falls back to the user `.npmrc`. A helper takes precedence over static credentials at the **same registry key**, so existing npm tokens can remain. More-specific child-path or package-scope credentials can bypass a registry-wide helper; the command stops with an error and leaves files unchanged when it finds these conflicts. Review those entries manually before retrying. Structured `pnpm_config__auth` environment overrides also require manual reconciliation. Project-level helpers are rejected; remove them from the project before configuring the trusted user file.
+
+**Compatibility:** pnpm 11.13 fixed rejection of helpers in `auth.ini`. Older pnpm versions should use the existing static `node-auth` flow or be upgraded. The command never adds pnpm-only settings to shared `~/.npmrc`, where npm can warn about unsupported keys. Ordinary npm usage continues to use existing credentials; refresh npm's static GAR token with `node-auth` when needed. No npm wrapper is required or installed.
+
+**Helper paths:** pnpm 11.13 splits helper commands on whitespace and rejects quotes and certain special characters. Install the helper in a path without spaces, quotes, `$`, `%`, backticks, `#`, or `;`. Windows paths are written with forward slashes. Paths that cannot be represented safely produce an actionable error rather than a broken helper entry.
+
+**Lifecycle:** pnpm invokes the native helper when constructing registry authentication for a command; the helper obtains a currently valid Google token. Repeated pnpm commands therefore do not require a manual credential refresh. This is not HTTP 403 interception, and token refresh during a long-running pnpm process depends on pnpm's own lifecycle. pnpm 11.13 allows 60 seconds for the helper. ADC or gcloud must work noninteractively when pnpm invokes it. A 403 may mean insufficient IAM permissions, a wrong repository, or an organizational policy; obtaining another token does not grant additional permissions.
+
+To verify, run `node-auth configure pnpm` twice (the second reports `Already configured`), inspect the helper path in `auth.ini`, then run `pnpm install` in a project with a GAR dependency. Running `node-auth-token` directly prints a sensitive token; avoid recording it in logs. To reverse setup, remove the relevant `//...:tokenHelper=...` entries from `auth.ini`. Existing npm credentials remain available, but may need refreshing with `node-auth`.
+
+Upstream references: [pnpm authentication settings](https://pnpm.io/npmrc), [pnpm 11.13 trust fix](https://github.com/pnpm/pnpm/releases/tag/v11.13.0), and
+[npm configuration and unsupported keys](https://docs.npmjs.com/files/npmrc/).
+
+### Optional pnpm Integration Checks
+
+Normal tests use isolated files, explicit fixture tokens, and a version-only pnpm fixture; they do not need Google credentials or installed package managers. To check the installed package managers without network access:
+
+```bash
+NODE_AUTH_TEST_PNPM=/absolute/path/to/pnpm \
+  cargo test --test pnpm_test real_package_managers -- --ignored
+```
+
+Select the actual pnpm executable when using Corepack so the isolated test home does not cause a download. npm must also be installed. This check exercises helper execution, precedence over static credentials, offline failure behavior, and npm configuration loading without warnings.
+
+For an opt-in live GAR metadata request (requires valid ADC or a gcloud session):
+
+```bash
+NODE_AUTH_TEST_PNPM=/absolute/path/to/pnpm \
+NODE_AUTH_GAR_REGISTRY=https://us-central1-npm.pkg.dev/my-project/my-repo/ \
+NODE_AUTH_GAR_PACKAGE=@my-scope/my-package \
+  cargo test --test pnpm_test live_gar -- --ignored
+```
+
+The live check reads your real Google credentials while keeping package-manager configuration in temporary directories. It is never required in CI.
 
 ## CLI Options
 

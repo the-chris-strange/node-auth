@@ -45,7 +45,15 @@ jobs:
           fi
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - run: cargo fmt --all -- --check
+      - name: Install rumdl
+        uses: rvben/rumdl@v0
+        with:
+          version: "0.3.0"
+          install-only: true
+      - uses: dprint/check@v2
+        with:
+          dprint-version: 0.64.0
+          cache: true
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked --all-targets
       - run: cargo package --locked
@@ -91,6 +99,7 @@ jobs:
           mkdir -p dist/package
           cp "target/$TARGET/release/node-auth" dist/package/
           cp "target/$TARGET/release/artifactregistry-auth" dist/package/
+          cp "target/$TARGET/release/node-auth-token" dist/package/
           cp README.md LICENSE dist/package/
           tar -C dist/package -czf "dist/node-auth-v$VERSION-$TARGET.tar.gz" .
       - name: Create Windows archive
@@ -103,6 +112,7 @@ jobs:
           New-Item -ItemType Directory -Force dist/package | Out-Null
           Copy-Item "target/$env:TARGET/release/node-auth.exe" dist/package/
           Copy-Item "target/$env:TARGET/release/artifactregistry-auth.exe" dist/package/
+          Copy-Item "target/$env:TARGET/release/node-auth-token.exe" dist/package/
           Copy-Item README.md, LICENSE dist/package/
           Compress-Archive -Path dist/package/* -DestinationPath "dist/node-auth-v$env:VERSION-$env:TARGET.zip"
       - uses: actions/upload-artifact@v7
@@ -167,8 +177,8 @@ jobs:
         id: packslip
         uses: jdx/packslip@v1
         with:
-          artifacts: dist/node-auth-*.tar.gz dist/node-auth-*.zip
-          bin: node-auth artifactregistry-auth
+          artifacts: dist/node-auth-v*.tar.gz dist/node-auth-v*.zip
+          bin: node-auth artifactregistry-auth node-auth-token
           tag: ${{ needs.preflight.outputs.tag }}
           version: ${{ needs.preflight.outputs.version }}
           upload: "false"

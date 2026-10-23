@@ -1,0 +1,11 @@
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+always_run = true
+entry = "dprint fmt"
+id = "dprint"
+language = "system"
+name = "Format with dprint"
+pass_filenames = false
+stages = [ "pre-commit" ]

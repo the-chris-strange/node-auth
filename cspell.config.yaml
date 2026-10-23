@@ -24,5 +24,8 @@ words:
 ignoreWords:
   - creds
   - dacl
+  - justintime
+  - msvc
   - myorg
   - userprofile
+  - xberg
