@@ -400,4 +400,8 @@ To publish a release:
 2. Create and push the matching tag, for example `v0.2.0`.
 3. Approve the protected `release` environment if repository rules require it.
 
-The release workflow publishes the crate, creates native archives and checksums, creates the GitHub release, publishes a signed Packslip manifest with build provenance, and pushes package definitions for the [brew tap](https://github.com/the-chris-strange/homebrew-tap) and [scoop bucket](https://github.com/the-chris-strange/scoop-bucket).
+The release workflow packages all three executables, publishes the crate, creates native archives and checksums, creates the GitHub release, publishes a signed Packslip manifest with build provenance, and pushes package definitions for the [brew tap](https://github.com/the-chris-strange/homebrew-tap) and [scoop bucket](https://github.com/the-chris-strange/scoop-bucket).
+
+Package publishing uses `Justintime50/homebrew-releaser@v4` for Homebrew and `xberg-io/actions/publish-scoop-manifests@v1` for Scoop. Set `PACKAGE_REPOSITORY_TOKEN` as a repository secret or a secret in the `release` environment, with Contents read/write access to both package repositories and read access to this repository. The default destinations are `the-chris-strange/homebrew-tap` and `the-chris-strange/scoop-bucket`; override them with `HOMEBREW_TAP_REPOSITORY` and `SCOOP_BUCKET_REPOSITORY` variables at repository or `release` environment scope. Initialize each package repository with a commit (for example, a README) before the first release; empty repositories cannot be checked out. The workflow creates the Scoop `bucket/` directory.
+
+The publishing jobs run after the GitHub release succeeds and report missing credentials as an error. Homebrew Releaser requires the latest stable release. The workflow adds its required archive names alongside the existing Rust-target archives and disables its checksum upload to support immutable releases.

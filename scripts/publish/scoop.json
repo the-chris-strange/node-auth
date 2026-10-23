@@ -1,0 +1,9 @@
+{
+  "manifests": [{
+    "name": "node-auth",
+    "template": "scripts/publish/node-auth.json.tmpl",
+    "assets": {
+      "windows_sha": "node-auth-${tag}-x86_64-pc-windows-msvc.zip"
+    }
+  }]
+}
