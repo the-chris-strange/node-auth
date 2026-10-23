@@ -23,6 +23,7 @@ pub fn configure(
   helper: Option<&Path>,
 ) -> Result<(PathBuf, bool), AuthError> {
   check_version()?;
+
   let home = dirs::home_dir().ok_or_else(|| config_error("Cannot determine home directory"))?;
   let cwd = std::env::current_dir()?.canonicalize()?;
   let root = cwd
@@ -32,11 +33,13 @@ pub fn configure(
     .unwrap_or(&cwd);
   let config_dir = config_dir(&home)?;
   let target = resolve(&config_dir.join("auth.ini"))?;
+
   if target.starts_with(root) {
     return Err(config_error(
       "pnpm auth.ini resolves inside the project; choose a user-level XDG_CONFIG_HOME",
     ));
   }
+
   let helper = resolve_helper(helper)?;
   let global_yaml = config_dir.join("config.yaml");
   let global_content = read_optional(&global_yaml)?;
@@ -49,36 +52,48 @@ pub fn configure(
   } else {
     user
   };
+
   let mut sources = vec![resolve(&user)?, resolve(&root.join(".npmrc"))?];
+
   if let Some(source) = source {
     if !source.is_file() {
       return Err(config_error(
         "Registry source does not exist; check --repo-config",
       ));
     }
+
     sources.push(resolve(source)?);
   }
+
   if sources.contains(&target) {
     return Err(config_error("Registry source must not be pnpm auth.ini"));
   }
+
   sources.sort();
   sources.dedup();
+
   let mut paths = sources.clone();
   paths.push(target.clone());
   paths.push(resolve(&global_yaml)?);
+
   let workspace_yaml = resolve(&root.join("pnpm-workspace.yaml"))?;
   paths.push(workspace_yaml.clone());
+
   let mut transaction = FileTransaction::new(&paths)?;
   let mut registries = BTreeSet::new();
+
   for path in &sources {
     discover_npmrc(transaction.contents(path)?, &mut registries)?;
   }
+
   let global = transaction.contents(&resolve(&global_yaml)?)?;
+
   if global != global_content {
     return Err(config_error(
       "Global pnpm configuration changed during discovery; run configure again",
     ));
   }
+
   let project_npmrc = resolve(&root.join(".npmrc"))?;
   if project_npmrc != resolve(&user)?
     && root_ini_lines(transaction.contents(&project_npmrc)?).any(|line| {
@@ -89,19 +104,24 @@ pub fn configure(
       "Project .npmrc contains tokenHelper, which pnpm rejects; remove it from the project before configuring the trusted user auth.ini",
     ));
   }
+
   discover_yaml(global, &mut registries)?;
   discover_yaml(transaction.contents(&workspace_yaml)?, &mut registries)?;
   discover_npmrc(transaction.contents(&target)?, &mut registries)?;
+
   if registries.is_empty() {
     return Err(config_error(
       "No GAR registry definitions found; set registry or @scope:registry in .npmrc, or registry/registries in pnpm-workspace.yaml",
     ));
   }
+
   for path in sources.iter().chain(std::iter::once(&target)) {
     check_conflicts(transaction.contents(path)?, &registries)?;
   }
+
   // Scope-specific JSON/YAML credentials can override a registry-wide helper.
   check_yaml_auth(global, &registries)?;
+
   for (key, _) in std::env::vars_os() {
     let key = key.to_string_lossy();
     if let Some((prefix, scoped)) = key.split_once("//")
@@ -111,6 +131,7 @@ pub fn configure(
     {
       check_conflicts(&format!("//{scoped}=environment"), &registries)?;
     }
+
     if key.eq_ignore_ascii_case("pnpm_config__auth") {
       return Err(config_error(
         "pnpm_config__auth is set; remove the structured auth override before configuring dynamic GAR authentication",
@@ -119,11 +140,14 @@ pub fn configure(
   }
   let original = transaction.contents(&target)?;
   let updated = transform(original, &registries, &helper)?;
+
   if updated == original {
     return Ok((target, false));
   }
+
   transaction.stage(&target, &updated)?;
   transaction.commit()?;
+
   Ok((target, true))
 }
 
@@ -137,7 +161,9 @@ fn check_version() -> Result<(), AuthError> {
   } else {
     &["pnpm"]
   };
+
   let mut output = None;
+
   for binary in binaries {
     match std::process::Command::new(binary).arg("--version").output() {
       Ok(result) => {
@@ -148,23 +174,29 @@ fn check_version() -> Result<(), AuthError> {
       Err(e) => return Err(e.into()),
     }
   }
+
   let output = output.ok_or_else(|| {
     config_error("pnpm is missing; install pnpm >=11.13.0 and ensure it is on PATH")
   })?;
+
   let version = String::from_utf8_lossy(&output.stdout);
   let version = version.trim();
   let parts: Vec<_> = version.split('.').map(str::parse::<u32>).collect();
+
   if !output.status.success() || parts.len() != 3 || parts.iter().any(Result::is_err) {
     return Err(config_error(
       "Cannot determine stable pnpm version; install pnpm >=11.13.0",
     ));
   }
+
   let values: Vec<_> = parts.into_iter().map(Result::unwrap).collect();
+
   if values.as_slice() < [11, 13, 0].as_slice() {
     return Err(config_error(
       "Dynamic configuration requires pnpm >=11.13.0 (trusted auth.ini tokenHelper fix); upgrade pnpm or use node-auth for static credentials",
     ));
   }
+
   Ok(())
 }
 
@@ -174,6 +206,7 @@ fn config_dir(home: &Path) -> Result<PathBuf, AuthError> {
     if !path.is_absolute() {
       return Err(config_error("XDG_CONFIG_HOME must be absolute"));
     }
+
     path.join("pnpm")
   } else if cfg!(target_os = "macos") {
     home.join("Library/Preferences/pnpm")
@@ -185,6 +218,7 @@ fn config_dir(home: &Path) -> Result<PathBuf, AuthError> {
   } else {
     home.join(".config/pnpm")
   };
+
   resolve(&base)
 }
 
@@ -200,13 +234,16 @@ fn yaml_root(content: &str) -> Result<Option<yaml_edit::Mapping>, AuthError> {
   if content.trim().is_empty() {
     return Ok(None);
   }
+
   let file = YamlFile::from_str(content).map_err(|source| AuthError::YamlInput {
     input: "pnpm configuration",
     source,
   })?;
+
   let doc = file
     .document()
     .ok_or_else(|| config_error("pnpm YAML must contain a mapping"))?;
+
   Ok(Some(doc.as_mapping().ok_or_else(|| {
     config_error("pnpm YAML must contain a mapping")
   })?))
@@ -223,6 +260,7 @@ fn user_npmrc(home: &Path, global: &str) -> Result<PathBuf, AuthError> {
       return Ok(PathBuf::from(value));
     }
   }
+
   if let Some(root) = yaml_root(global)?
     && let Some(value) = root.get("npmrcAuthFile")
   {
@@ -235,12 +273,14 @@ fn user_npmrc(home: &Path, global: &str) -> Result<PathBuf, AuthError> {
         "Expand npmrcAuthFile to an absolute path before configuring pnpm",
       ));
     }
+
     return Ok(if let Some(rest) = value.strip_prefix("~/") {
       home.join(rest)
     } else {
       PathBuf::from(value)
     });
   }
+
   Ok(
     std::env::var_os("npm_config_userconfig")
       .or_else(|| std::env::var_os("NPM_CONFIG_USERCONFIG"))
@@ -255,6 +295,7 @@ fn add_registry(value: &str, registries: &mut BTreeSet<String>) -> Result<(), Au
       "Registry URL contains an unresolved environment variable; use a literal HTTPS GAR URL",
     ));
   }
+
   if let Some(registry) = (RegistryPolicy {
     allow_all_domains: false,
   })
@@ -262,14 +303,17 @@ fn add_registry(value: &str, registries: &mut BTreeSet<String>) -> Result<(), Au
   {
     registries.insert(registry.npm_key().to_owned());
   }
+
   Ok(())
 }
 
 fn ini_entry(line: &str) -> Option<(&str, &str)> {
   let line = line.trim();
+
   if line.starts_with(['#', ';']) {
     return None;
   }
+
   line.split_once('=').map(|(k, v)| (k.trim(), v.trim()))
 }
 
@@ -290,22 +334,27 @@ fn ini_value(value: &str) -> Result<String, AuthError> {
       .map(str::to_owned)
       .ok_or_else(|| config_error("Unsupported quoted npm registry URL; use a literal unquoted URL before an inline comment"));
   }
+
   let mut escaped = false;
   let mut end = value.len();
+
   for (index, c) in value.char_indices() {
     if escaped {
       escaped = false;
       continue;
     }
+
     if c == '\\' {
       escaped = true;
       continue;
     }
+
     if matches!(c, '#' | ';') {
       end = index;
       break;
     }
   }
+
   Ok(value[..end].trim().replace(r"\#", "#").replace(r"\;", ";"))
 }
 
@@ -317,6 +366,7 @@ fn discover_npmrc(content: &str, registries: &mut BTreeSet<String>) -> Result<()
       add_registry(&ini_value(value)?, registries)?;
     }
   }
+
   Ok(())
 }
 
@@ -324,6 +374,7 @@ fn discover_yaml(content: &str, registries: &mut BTreeSet<String>) -> Result<(),
   let Some(root) = yaml_root(content)? else {
     return Ok(());
   };
+
   if let Some(value) = root.get("registry") {
     add_registry(
       &value
@@ -333,15 +384,18 @@ fn discover_yaml(content: &str, registries: &mut BTreeSet<String>) -> Result<(),
       registries,
     )?;
   }
+
   if let Some(value) = root.get("registries") {
     let mapping = value
       .as_mapping()
       .ok_or_else(|| config_error("registries must be a mapping"))?;
+
     for (key, value) in mapping.iter() {
       let key = key
         .as_scalar()
         .ok_or_else(|| config_error("Registry key must be a string"))?
         .as_string();
+
       if key.starts_with("https://") {
         add_registry(&key, registries)?;
       } else {
@@ -355,6 +409,7 @@ fn discover_yaml(content: &str, registries: &mut BTreeSet<String>) -> Result<(),
       }
     }
   }
+
   Ok(())
 }
 
@@ -362,17 +417,21 @@ fn check_yaml_auth(content: &str, registries: &BTreeSet<String>) -> Result<(), A
   let Some(root) = yaml_root(content)? else {
     return Ok(());
   };
+
   if let Some(auth) = root.get("_auth") {
     let map = auth
       .as_mapping()
       .ok_or_else(|| config_error("pnpm _auth must be a mapping"))?;
+
     for (key, value) in map.iter() {
       let key = key
         .as_scalar()
         .ok_or_else(|| config_error("Auth registry must be a string"))?
         .as_string();
       let mut matched = BTreeSet::new();
+
       add_registry(&key, &mut matched)?;
+
       if matched
         .iter()
         .any(|key| registries.iter().any(|r| key.starts_with(r)))
@@ -380,6 +439,7 @@ fn check_yaml_auth(content: &str, registries: &BTreeSet<String>) -> Result<(), A
         let scopes = value
           .as_mapping()
           .ok_or_else(|| config_error("Auth scopes must be a mapping"))?;
+
         if scopes
           .iter()
           .any(|(key, _)| key.as_scalar().is_none_or(|s| s.as_string() != "@"))
@@ -391,6 +451,7 @@ fn check_yaml_auth(content: &str, registries: &BTreeSet<String>) -> Result<(), A
       }
     }
   }
+
   Ok(())
 }
 
@@ -399,9 +460,11 @@ fn check_conflicts(content: &str, registries: &BTreeSet<String>) -> Result<(), A
     let Some((key, _)) = ini_entry(line) else {
       continue;
     };
+
     let Some((scope, field)) = key.rsplit_once(':') else {
       continue;
     };
+
     if ![
       "_authToken",
       "_auth",
@@ -413,7 +476,9 @@ fn check_conflicts(content: &str, registries: &BTreeSet<String>) -> Result<(), A
     {
       continue;
     }
+
     let scope = format!("{}/", scope.trim_end_matches('/'));
+
     for registry in registries {
       if !registries.contains(&scope) && scope.starts_with(registry) {
         return Err(config_error(
@@ -422,6 +487,7 @@ fn check_conflicts(content: &str, registries: &BTreeSet<String>) -> Result<(), A
       }
     }
   }
+
   Ok(())
 }
 
@@ -431,6 +497,7 @@ fn resolve_helper(explicit: Option<&Path>) -> Result<String, AuthError> {
     path.to_path_buf()
   } else {
     let sibling = std::env::current_exe()?.with_file_name(&name);
+
     if sibling.is_file() {
       sibling
     } else {
@@ -443,18 +510,22 @@ fn resolve_helper(explicit: Option<&Path>) -> Result<String, AuthError> {
   let path = path
     .canonicalize()
     .map_err(|_| config_error("node-auth-token executable does not exist"))?;
+
   if !path.is_file() {
     return Err(config_error("Token helper must be an executable file"));
   }
+
   #[cfg(unix)]
   {
     use std::os::unix::fs::PermissionsExt;
+
     if path.metadata()?.permissions().mode() & 0o111 == 0 {
       return Err(config_error(
         "Token helper is not executable; fix its execute permissions",
       ));
     }
   }
+
   #[cfg(windows)]
   if !path
     .extension()
@@ -462,6 +533,7 @@ fn resolve_helper(explicit: Option<&Path>) -> Result<String, AuthError> {
   {
     return Err(config_error("Token helper must be a native .exe file"));
   }
+
   let value = path
     .to_str()
     .ok_or_else(|| config_error("Token helper path must be UTF-8"))?;
@@ -478,6 +550,7 @@ fn resolve_helper(explicit: Option<&Path>) -> Result<String, AuthError> {
   } else {
     value.into()
   };
+
   if value
     .chars()
     .any(|c| c.is_whitespace() || c.is_control() || "$%`\"'#;\\".contains(c))
@@ -486,6 +559,7 @@ fn resolve_helper(explicit: Option<&Path>) -> Result<String, AuthError> {
       "pnpm cannot safely represent this tokenHelper path; install node-auth-token in an absolute path without spaces, quotes, $, %, backticks, backslashes, # or ;",
     ));
   }
+
   Ok(value)
 }
 
@@ -499,18 +573,23 @@ fn transform(
   } else {
     "\n"
   };
+
   let mut seen = BTreeSet::new();
   let mut offset = 0;
   let mut section_start = content.len();
+
   for line in content.split_inclusive('\n') {
     if line.trim_start().starts_with('[') {
       section_start = offset;
       break;
     }
+
     offset += line.len();
   }
+
   let (root, sections) = content.split_at(section_start);
   let mut output = String::new();
+
   for line in root.split_inclusive('\n') {
     if let Some((key, _)) = ini_entry(line)
       && let Some(registry) = key.strip_suffix(":tokenHelper")
@@ -522,9 +601,11 @@ fn transform(
       .parse_npm_key(registry)?
       {
         let registry = parsed.npm_key();
+
         if registries.contains(registry) {
           if seen.insert(registry.to_owned()) {
             let replacement = format!("{registry}:tokenHelper={helper}");
+
             if line.trim_end_matches(['\r', '\n']) == replacement {
               output.push_str(line);
             } else {
@@ -532,18 +613,24 @@ fn transform(
               output.push_str(newline);
             }
           }
+
           continue;
         }
       }
     }
+
     output.push_str(line);
   }
+
   for registry in registries.difference(&seen) {
     if !output.is_empty() && !output.ends_with('\n') {
       output.push_str(newline);
     }
+
     output.push_str(&format!("{registry}:tokenHelper={helper}{newline}"));
   }
+
   output.push_str(sections);
+
   Ok(output)
 }

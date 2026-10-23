@@ -85,6 +85,7 @@ async fn bun_only_registry_writes_user_npm_credentials() {
   let dir = tempdir().unwrap();
   let bunfig = dir.path().join("bunfig.toml");
   let user_npmrc = dir.path().join("user.npmrc");
+
   fs::write(
     &bunfig,
     "[install.scopes]\nmyorg = { url = \"https://us-npm.pkg.dev/project/repo/\" }\n",
@@ -118,11 +119,14 @@ async fn bun_env_updates_bunfig_and_private_env_file() {
   let bunfig = dir.path().join("bunfig.toml");
   let env_file = dir.path().join(".env.local");
   let source = "# keep\n[install.scopes]\nmyorg = { url = 'https://us-npm.pkg.dev/project/repo', username = \"old\", password = \"old\" }\n";
+
   fs::write(&bunfig, source).unwrap();
   fs::write(&env_file, "OTHER=value\nNODE_AUTH_TOKEN=old\n").unwrap();
+
   #[cfg(unix)]
   {
     use std::os::unix::fs::PermissionsExt;
+
     fs::set_permissions(&env_file, std::fs::Permissions::from_mode(0o600)).unwrap();
   }
 
@@ -134,17 +138,20 @@ async fn bun_env_updates_bunfig_and_private_env_file() {
     token: Some("fresh-bun-token".to_string()),
     ..Default::default()
   };
+
   let outcome = run(&options).await.unwrap();
   let RunOutcome::Updated { paths, .. } = outcome else {
     panic!("expected updated outcome");
   };
   assert_eq!(paths.len(), 2);
+
   let updated_bunfig = fs::read_to_string(&bunfig).unwrap();
   assert!(updated_bunfig.starts_with("# keep\n"));
   assert!(updated_bunfig.contains("token = \"$NODE_AUTH_TOKEN\""));
   assert!(!updated_bunfig.contains("fresh-bun-token"));
   assert!(!updated_bunfig.contains("username"));
   assert!(!updated_bunfig.contains("password"));
+
   let updated_env = fs::read_to_string(&env_file).unwrap();
   assert!(updated_env.contains("OTHER=value\n"));
   assert!(updated_env.contains("NODE_AUTH_TOKEN=fresh-bun-token\n"));
@@ -152,6 +159,7 @@ async fn bun_env_updates_bunfig_and_private_env_file() {
   #[cfg(unix)]
   {
     use std::os::unix::fs::PermissionsExt;
+
     assert_eq!(
       fs::metadata(env_file).unwrap().permissions().mode() & 0o077,
       0
@@ -163,11 +171,13 @@ async fn bun_env_updates_bunfig_and_private_env_file() {
 async fn bun_env_and_local_credential_are_rejected_without_writes() {
   let dir = tempdir().unwrap();
   let bunfig = dir.path().join("bunfig.toml");
+
   fs::write(
     &bunfig,
     "[install.scopes]\nmyorg = \"https://us-npm.pkg.dev/project/repo\"\n",
   )
   .unwrap();
+
   let options = Options {
     repo_config_bun: Some(bunfig.clone()),
     bun_env: true,
@@ -175,6 +185,7 @@ async fn bun_env_and_local_credential_are_rejected_without_writes() {
     token: Some("token".to_string()),
     ..Default::default()
   };
+
   let error = run(&options).await.unwrap_err();
   assert!(matches!(
     error,
@@ -189,6 +200,7 @@ async fn invalid_bunfig_preserves_existing_npm_credentials() {
   let bunfig = dir.path().join("bunfig.toml");
   let project_npmrc = dir.path().join("project.npmrc");
   let user_npmrc = dir.path().join("user.npmrc");
+
   fs::write(&bunfig, "[install.scopes\n").unwrap();
   fs::write(
     &project_npmrc,
@@ -205,6 +217,7 @@ async fn invalid_bunfig_preserves_existing_npm_credentials() {
     token: Some("token".to_string()),
     ..Default::default()
   };
+
   assert!(run(&options).await.is_err());
   assert_eq!(
     fs::read_to_string(project_npmrc).unwrap(),
@@ -218,18 +231,22 @@ async fn invalid_bunfig_preserves_existing_npm_credentials() {
 async fn equivalent_npm_paths_are_written_once() {
   let dir = tempdir().unwrap();
   let path = dir.path().join(".npmrc");
+
   fs::write(
     &path,
     "@scope:registry=https://us-npm.pkg.dev/project/repo/\n",
   )
   .unwrap();
+
   let options = Options {
     repo_config: Some(dir.path().join("./.npmrc")),
     credential_config: Some(path.clone()),
     token: Some("valid-token".to_string()),
     ..Default::default()
   };
+
   run(&options).await.unwrap();
+
   assert!(
     fs::read_to_string(path)
       .unwrap()
@@ -246,6 +263,7 @@ async fn invalid_yarn_preserves_both_npm_files() {
   let yarn_target = dir.path().join("user.yarnrc.yml");
   let source_before = "@scope:registry=https://us-npm.pkg.dev/project/repo/\n//us-npm.pkg.dev/project/repo/:_authToken=old\n";
   let target_before = "save-exact=true\n";
+
   fs::write(&npm_source, source_before).unwrap();
   fs::write(&npm_target, target_before).unwrap();
   fs::write(
@@ -254,6 +272,7 @@ async fn invalid_yarn_preserves_both_npm_files() {
   )
   .unwrap();
   fs::write(&yarn_target, "invalid: [\n").unwrap();
+
   let options = Options {
     repo_config: Some(npm_source.clone()),
     credential_config: Some(npm_target.clone()),
@@ -263,6 +282,7 @@ async fn invalid_yarn_preserves_both_npm_files() {
     token: Some("valid-token".to_string()),
     ..Default::default()
   };
+
   let error = run(&options).await.unwrap_err();
   assert!(error.to_string().contains("credential .yarnrc.yml"));
   assert_eq!(fs::read_to_string(npm_source).unwrap(), source_before);
@@ -276,6 +296,7 @@ async fn yarn_does_not_attach_token_to_other_registry_without_override() {
   let npm_source = dir.path().join("project.npmrc");
   let yarn_source = dir.path().join("project.yarnrc.yml");
   let yarn_target = dir.path().join("user.yarnrc.yml");
+
   fs::write(
     &npm_source,
     "@scope:registry=https://us-npm.pkg.dev/project/repo/\n",
@@ -286,6 +307,7 @@ async fn yarn_does_not_attach_token_to_other_registry_without_override() {
     "npmScopes:\n  other:\n    npmRegistryServer: https://registry.example.com/private\n",
   )
   .unwrap();
+
   let options = Options {
     repo_config: Some(npm_source),
     credential_config: Some(dir.path().join("user.npmrc")),
@@ -295,14 +317,18 @@ async fn yarn_does_not_attach_token_to_other_registry_without_override() {
     token: Some("valid-token".to_string()),
     ..Default::default()
   };
+
   run(&options).await.unwrap();
+
   assert!(!yarn_target.exists());
 
   let override_options = Options {
     allow_all_domains: true,
     ..options
   };
+
   run(&override_options).await.unwrap();
+
   assert!(
     fs::read_to_string(yarn_target)
       .unwrap()
@@ -352,11 +378,13 @@ fn compatibility_binary_accepts_official_yarn_flags_without_npm_config() {
   let dir = tempdir().unwrap();
   let source = dir.path().join("project.yarnrc.yml");
   let target = dir.path().join("user.yarnrc.yml");
+
   fs::write(
     &source,
     "npmScopes:\n  scope:\n    npmRegistryServer: https://us-npm.pkg.dev/project/repo\n",
   )
   .unwrap();
+
   let output = Command::new(env!("CARGO_BIN_EXE_artifactregistry-auth"))
     .arg("--repo-config")
     .arg(dir.path().join("missing.npmrc"))

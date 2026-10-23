@@ -47,6 +47,7 @@ mod platform_lock {
       // Use a stable, case-insensitive hash so every node-auth process in
       // this login session addresses the same kernel object.
       let mut hash = 0xcbf29ce484222325_u64;
+
       for unit in directory
         .as_os_str()
         .to_string_lossy()
@@ -56,14 +57,17 @@ mod platform_lock {
         hash ^= u64::from(unit);
         hash = hash.wrapping_mul(0x100000001b3);
       }
+
       let name = format!("Local\\node-auth-directory-{hash:016x}")
         .encode_utf16()
         .chain(iter::once(0))
         .collect::<Vec<_>>();
       let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
+
       if handle.is_null() {
         return Err(io::Error::last_os_error());
       }
+
       let handle = unsafe { OwnedHandle::from_raw_handle(handle as RawHandle) };
       match unsafe { WaitForSingleObject(handle.as_raw_handle() as _, INFINITE) } {
         WAIT_OBJECT_0 | WAIT_ABANDONED => Ok(Self(handle)),
@@ -149,6 +153,7 @@ mod windows_security {
       if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
         return Err(io::Error::last_os_error());
       }
+
       let token = OwnedHandle::from_raw_handle(token as RawHandle);
 
       let mut required = 0;
@@ -159,11 +164,14 @@ mod windows_security {
         0,
         &mut required,
       );
+
       if required == 0 {
         return Err(io::Error::last_os_error());
       }
+
       let words = (required as usize).div_ceil(size_of::<usize>());
       let mut token_info = vec![0usize; words];
+
       if GetTokenInformation(
         token.as_raw_handle() as _,
         TokenUser,
@@ -174,16 +182,21 @@ mod windows_security {
       {
         return Err(io::Error::last_os_error());
       }
+
       let token_user = &*token_info.as_ptr().cast::<TOKEN_USER>();
       let mut sid_string = std::ptr::null_mut();
+
       if ConvertSidToStringSidW(token_user.User.Sid, &mut sid_string) == 0 {
         return Err(io::Error::last_os_error());
       }
+
       let allocation = LocalAllocation(sid_string.cast());
       let len = (0..).take_while(|&i| *sid_string.add(i) != 0).count();
       let result = String::from_utf16(std::slice::from_raw_parts(sid_string, len))
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error));
+
       drop(allocation);
+
       result
     }
   }
@@ -192,6 +205,7 @@ mod windows_security {
     let sddl = format!("D:P(A;;FA;;;{})", current_user_sid()?);
     let encoded = sddl.encode_utf16().chain(iter::once(0)).collect::<Vec<_>>();
     let mut descriptor = std::ptr::null_mut();
+
     unsafe {
       if ConvertStringSecurityDescriptorToSecurityDescriptorW(
         encoded.as_ptr(),
@@ -203,6 +217,7 @@ mod windows_security {
         return Err(io::Error::last_os_error());
       }
     }
+
     Ok(LocalAllocation(descriptor))
   }
 
@@ -226,6 +241,7 @@ mod windows_security {
         std::ptr::null_mut(),
       )
     };
+
     if handle == INVALID_HANDLE_VALUE {
       Err(io::Error::last_os_error())
     } else {
@@ -238,6 +254,7 @@ mod windows_security {
   pub(super) fn read_dacl(path: &Path) -> io::Result<SecurityDescriptor> {
     let path = wide(path);
     let mut required = 0;
+
     unsafe {
       GetFileSecurityW(
         path.as_ptr(),
@@ -247,9 +264,11 @@ mod windows_security {
         &mut required,
       );
     }
+
     if required == 0 {
       return Err(io::Error::last_os_error());
     }
+
     let words = (required as usize).div_ceil(size_of::<usize>());
     let mut storage = vec![0usize; words];
     if unsafe {
@@ -264,6 +283,7 @@ mod windows_security {
     {
       return Err(io::Error::last_os_error());
     }
+
     Ok(SecurityDescriptor { storage })
   }
 
@@ -271,17 +291,21 @@ mod windows_security {
   pub(super) fn apply_dacl(path: &Path, descriptor: &SecurityDescriptor) -> io::Result<()> {
     let mut control = 0;
     let mut revision = 0;
+
     if unsafe { GetSecurityDescriptorControl(descriptor.as_ptr(), &mut control, &mut revision) }
       == 0
     {
       return Err(io::Error::last_os_error());
     }
+
     let protection = if control & SE_DACL_PROTECTED != 0 {
       PROTECTED_DACL_SECURITY_INFORMATION
     } else {
       UNPROTECTED_DACL_SECURITY_INFORMATION
     };
+
     let path = wide(path);
+
     if unsafe {
       SetFileSecurityW(
         path.as_ptr(),
@@ -299,6 +323,7 @@ mod windows_security {
   #[cfg(test)]
   unsafe fn descriptor_to_sddl(descriptor: PSECURITY_DESCRIPTOR) -> io::Result<String> {
     let mut text = std::ptr::null_mut();
+
     if unsafe {
       ConvertSecurityDescriptorToStringSecurityDescriptorW(
         descriptor,
@@ -311,11 +336,14 @@ mod windows_security {
     {
       return Err(io::Error::last_os_error());
     }
+
     let allocation = LocalAllocation(text.cast());
     let len = (0..).take_while(|&i| unsafe { *text.add(i) != 0 }).count();
     let result = String::from_utf16(unsafe { std::slice::from_raw_parts(text, len) })
       .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error));
+
     drop(allocation);
+
     result
   }
 
@@ -339,6 +367,7 @@ pub fn resolve(path: &Path) -> Result<PathBuf, AuthError> {
   } else {
     std::env::current_dir()?.join(path)
   };
+
   match fs::symlink_metadata(&absolute) {
     Ok(_) => Ok(absolute.canonicalize()?),
     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -358,6 +387,7 @@ pub fn resolve(path: &Path) -> Result<PathBuf, AuthError> {
 struct Snapshot {
   contents: Option<String>,
   permissions: Option<Permissions>,
+
   #[cfg(windows)]
   dacl: Option<windows_security::SecurityDescriptor>,
 }
@@ -417,8 +447,10 @@ impl FileTransaction {
         },
         Err(e) => return Err(e.into()),
       };
+
       snapshots.insert(path, snapshot);
     }
+
     Ok(Self {
       snapshots,
       staged: BTreeMap::new(),
@@ -462,31 +494,40 @@ impl FileTransaction {
         path.display()
       ))
     })?;
+
     if self.staged.contains_key(path) {
       return Err(AuthError::Config(format!(
         "File staged twice: {}",
         path.display()
       )));
     }
+
     let parent = path
       .parent()
       .ok_or_else(|| AuthError::Config(format!("Path has no parent: {}", path.display())))?;
+
     #[cfg(windows)]
     let mut temp = Builder::new()
       .prefix(".node-auth-")
       .make_in(parent, windows_security::create_private_file)?;
+
     #[cfg(not(windows))]
     let mut temp = Builder::new().prefix(".node-auth-").tempfile_in(parent)?;
+
     #[cfg(windows)]
     if let Some(dacl) = &snapshot.dacl {
       windows_security::apply_dacl(temp.path(), dacl)?;
     }
+
     temp.write_all(content.as_bytes())?;
+
     if let Some(permissions) = &snapshot.permissions {
       temp.as_file().set_permissions(permissions.clone())?;
     }
+
     temp.as_file().sync_all()?;
     self.staged.insert(path.to_path_buf(), temp);
+
     Ok(())
   }
 
@@ -498,6 +539,7 @@ impl FileTransaction {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(e.into()),
       };
+
       if current != snapshot.contents {
         return Err(AuthError::Config(format!(
           "Configuration changed during update: {}",
@@ -513,6 +555,7 @@ impl FileTransaction {
       File::open(path.parent().unwrap())?.sync_all()?;
       written.push(path);
     }
+
     Ok(written)
   }
 }
@@ -526,14 +569,19 @@ mod tests {
   fn resolves_aliases_and_replaces_atomically() {
     let dir = tempdir().unwrap();
     let path = dir.path().join(".npmrc");
+
     fs::write(&path, "old").unwrap();
+
     let alias = dir.path().join("./.npmrc");
     assert_eq!(resolve(&path).unwrap(), resolve(&alias).unwrap());
+
     let mut tx = FileTransaction::new(&[path.clone(), alias]).unwrap();
     let resolved = resolve(&path).unwrap();
     assert_eq!(tx.contents(&resolved).unwrap(), "old");
+
     tx.stage(&resolved, "new").unwrap();
     tx.commit().unwrap();
+
     assert_eq!(fs::read_to_string(path).unwrap(), "new");
     assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
   }
@@ -542,20 +590,25 @@ mod tests {
   #[test]
   fn new_file_is_private_and_existing_mode_is_preserved() {
     use std::os::unix::fs::PermissionsExt;
+
     let dir = tempdir().unwrap();
     let new_path = dir.path().join("new.npmrc");
+
     let mut tx = FileTransaction::new(std::slice::from_ref(&new_path)).unwrap();
     tx.stage(&resolve(&new_path).unwrap(), "token").unwrap();
     tx.commit().unwrap();
+
     assert_eq!(
       fs::metadata(&new_path).unwrap().permissions().mode() & 0o777,
       0o600
     );
 
     fs::set_permissions(&new_path, Permissions::from_mode(0o640)).unwrap();
+
     let mut tx = FileTransaction::new(std::slice::from_ref(&new_path)).unwrap();
     tx.stage(&resolve(&new_path).unwrap(), "next").unwrap();
     tx.commit().unwrap();
+
     assert_eq!(
       fs::metadata(&new_path).unwrap().permissions().mode() & 0o777,
       0o640
@@ -567,20 +620,26 @@ mod tests {
   fn new_file_is_private_and_existing_dacl_is_preserved() {
     let dir = tempdir().unwrap();
     let new_path = dir.path().join("new.npmrc");
+
     let mut tx = FileTransaction::new(std::slice::from_ref(&new_path)).unwrap();
     tx.stage(&resolve(&new_path).unwrap(), "token").unwrap();
     tx.commit().unwrap();
+
     assert_eq!(
       windows_security::dacl_sddl(&new_path).unwrap(),
       windows_security::private_dacl_sddl().unwrap()
     );
 
     let existing_path = dir.path().join("existing.npmrc");
+
     fs::write(&existing_path, "old").unwrap();
+
     let original_dacl = windows_security::dacl_sddl(&existing_path).unwrap();
+
     let mut tx = FileTransaction::new(std::slice::from_ref(&existing_path)).unwrap();
     tx.stage(&resolve(&existing_path).unwrap(), "next").unwrap();
     tx.commit().unwrap();
+
     assert_eq!(
       windows_security::dacl_sddl(&existing_path).unwrap(),
       original_dacl
@@ -591,16 +650,21 @@ mod tests {
   fn transactions_serialize_reads_and_writes() {
     use std::sync::mpsc;
     use std::time::Duration;
+
     let dir = tempdir().unwrap();
     let path = dir.path().join("shared.npmrc");
+
     fs::write(&path, "old").unwrap();
+
     let mut first = FileTransaction::new(std::slice::from_ref(&path)).unwrap();
     let (started_tx, started_rx) = mpsc::channel();
     let (content_tx, content_rx) = mpsc::channel();
     let second_path = path.clone();
     let worker = std::thread::spawn(move || {
       started_tx.send(()).unwrap();
+
       let second = FileTransaction::new(std::slice::from_ref(&second_path)).unwrap();
+
       content_tx
         .send(
           second
@@ -610,14 +674,17 @@ mod tests {
         )
         .unwrap();
     });
+
     started_rx.recv().unwrap();
     assert!(content_rx.recv_timeout(Duration::from_millis(50)).is_err());
+
     first.stage(&resolve(&path).unwrap(), "new").unwrap();
     first.commit().unwrap();
     assert_eq!(
       content_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
       "new"
     );
+
     worker.join().unwrap();
   }
 }

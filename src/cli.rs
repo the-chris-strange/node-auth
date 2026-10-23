@@ -150,7 +150,9 @@ impl Cli {
 /// Parse arguments, run the library, and present the result for either binary.
 pub async fn execute() -> ExitCode {
   let cli = Cli::parse();
+
   logger::init(cli.verbose);
+
   if let Some(Command::Configure {
     manager: ConfigureManager::Pnpm {
       repo_config,
@@ -177,6 +179,7 @@ pub async fn execute() -> ExitCode {
       }
     };
   }
+
   match run(&cli.to_options()).await {
     Ok(outcome) => {
       logger::present_outcome(outcome);

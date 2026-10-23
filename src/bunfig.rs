@@ -34,6 +34,7 @@ pub fn registry_urls(
     let scopes = scopes.as_table_like().ok_or_else(|| {
       AuthError::Config("Bun `install.scopes` configuration must be a table".to_string())
     })?;
+
     for (scope, item) in scopes.iter() {
       let location = format!("install.scopes.{scope}");
       if let Some(registry) = parse_registry_item(item, &location, &policy)? {
@@ -59,6 +60,7 @@ pub fn transform_bunfig_for_env(
   if eligible.is_empty() {
     return Ok(None);
   }
+
   let policy = RegistryPolicy { allow_all_domains };
   let install = document
     .get_mut("install")
@@ -68,6 +70,7 @@ pub fn transform_bunfig_for_env(
   if let Some(item) = install.get_mut("registry") {
     update_registry_item(item, "install.registry", &policy)?;
   }
+
   if let Some(scopes) = install.get_mut("scopes") {
     let scopes = scopes.as_table_like_mut().ok_or_else(|| {
       AuthError::Config("Bun `install.scopes` configuration must be a table".to_string())
@@ -76,17 +79,20 @@ pub fn transform_bunfig_for_env(
       update_registry_item(item, &format!("install.scopes.{scope}"), &policy)?;
     }
   }
+
   Ok(Some(document.to_string()))
 }
 
 /// Add or refresh `NODE_AUTH_TOKEN` in dotenv content while preserving unrelated lines.
 pub fn transform_env_local(content: &str, token: &str) -> Result<String, AuthError> {
   validate_token(token)?;
+
   let newline = if content.contains("\r\n") {
     "\r\n"
   } else {
     "\n"
   };
+
   let mut output = String::with_capacity(content.len() + token.len() + 32);
   let mut replaced = false;
 
@@ -96,6 +102,7 @@ pub fn transform_env_local(content: &str, token: &str) -> Result<String, AuthErr
     let trimmed = body.trim_start();
     let is_token =
       trimmed.starts_with("NODE_AUTH_TOKEN=") || trimmed.starts_with("export NODE_AUTH_TOKEN=");
+
     if is_token {
       if !replaced {
         output.push_str(TOKEN_VARIABLE);
@@ -120,6 +127,7 @@ pub fn transform_env_local(content: &str, token: &str) -> Result<String, AuthErr
     output.push_str(token);
     output.push_str(newline);
   }
+
   Ok(output)
 }
 
@@ -141,6 +149,7 @@ fn registry_url<'a>(item: &'a Item, location: &str) -> Result<&'a str, AuthError
   if let Some(url) = value.as_str() {
     return Ok(url);
   }
+
   let table = value
     .as_inline_table()
     .ok_or_else(|| invalid_registry(location))?;
@@ -158,6 +167,7 @@ fn update_registry_item(
   if parse_registry_item(item, location, policy)?.is_none() {
     return Ok(());
   }
+
   let value = item
     .as_value_mut()
     .ok_or_else(|| invalid_registry(location))?;
@@ -169,12 +179,14 @@ fn update_registry_item(
     *value = Value::InlineTable(table);
     return Ok(());
   }
+
   let table = value
     .as_inline_table_mut()
     .ok_or_else(|| invalid_registry(location))?;
   table.remove("username");
   table.remove("password");
   table.insert("token", Value::from(TOKEN_REFERENCE));
+
   Ok(())
 }
 
@@ -197,6 +209,7 @@ registry = { url = "https://us-npm.pkg.dev/project/default", token = "old" }
 myorg = "https://europe-npm.pkg.dev/project/scoped"
 other = { url = "https://registry.example.com/private", token = "leave" }
 "#;
+
     let registries = registry_urls(input, false).unwrap();
     assert_eq!(registries.len(), 2);
     assert_eq!(
@@ -213,6 +226,7 @@ other = { url = "https://registry.example.com/private", token = "leave" }
 myorg = { url = 'https://us-npm.pkg.dev/project/repo', username = "old", password = "$OLD", extra = true } # keep
 other = "https://registry.example.com/private"
 "#;
+
     let output = transform_bunfig_for_env(input, false).unwrap().unwrap();
     assert!(output.starts_with("# Bun settings\n"));
     assert!(output.contains("url = 'https://us-npm.pkg.dev/project/repo'"));
@@ -227,6 +241,7 @@ other = "https://registry.example.com/private"
   #[test]
   fn converts_string_entry_to_inline_table() {
     let input = "[install.scopes]\nmyorg = 'https://us-npm.pkg.dev/project/repo'\n";
+
     let output = transform_bunfig_for_env(input, false).unwrap().unwrap();
     assert!(output.contains("url = 'https://us-npm.pkg.dev/project/repo'"));
     assert!(output.contains("token = \"$NODE_AUTH_TOKEN\""));
@@ -243,6 +258,7 @@ other = "https://registry.example.com/private"
   fn domain_override_updates_other_https_registries() {
     let input = "[install.scopes]\nmyorg = \"https://registry.example.com/private\"\n";
     assert!(transform_bunfig_for_env(input, false).unwrap().is_none());
+
     let output = transform_bunfig_for_env(input, true).unwrap().unwrap();
     assert!(output.contains("token = \"$NODE_AUTH_TOKEN\""));
   }
@@ -251,6 +267,7 @@ other = "https://registry.example.com/private"
   fn updates_env_token_once_and_preserves_line_endings() {
     let input =
       "# local\r\nNODE_AUTH_TOKEN=old\r\nOTHER=value\r\nexport NODE_AUTH_TOKEN=duplicate\r\n";
+
     let output = transform_env_local(input, "fresh-token").unwrap();
     assert_eq!(output.matches("NODE_AUTH_TOKEN=").count(), 1);
     assert!(output.contains("NODE_AUTH_TOKEN=fresh-token\r\n"));

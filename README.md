@@ -7,7 +7,7 @@
 
 A fast, lightweight, standalone Rust CLI and library that authenticates JavaScript package managers (**npm**, **yarn**, **pnpm**, and **Bun**) to private **Google Artifact Registry (GAR)** npm repositories using **Google Cloud Application Default Credentials (ADC)**.
 
-It replicates and improves upon the functionality of Google's [`@google-cloud/artifact-registry-npm-tools`](https://github.com/GoogleCloudPlatform/artifact-registry-npm-tools), but **without requiring a JavaScript runtime or package manager to be installed or configured beforehand**.
+It replicates and improves upon the functionality of Google's [`@google-cloud/artifact-registry-npm-tools`](https://github.com/GoogleCloudPlatform/artifact-registry-npm-tools), but without requiring a JavaScript runtime or package manager to be installed or configured beforehand.
 
 ---
 
@@ -15,7 +15,7 @@ It replicates and improves upon the functionality of Google's [`@google-cloud/ar
 
 Google's official `google-artifactregistry-auth` tool is distributed as an npm package, which creates a chicken-and-egg problem: in minimal CI/CD containers, Docker build stages, or restricted developer workstations, you often need authentication *before* Node/npm is bootstrapped or when bootstrapping dependency caches. It introduces heavy Node.js runtime dependencies just to write an authentication token to `.npmrc`.
 
-`node-auth` provides native binaries for **Windows**, **Linux**, and **macOS** and does not require a Node.js runtime.
+`node-auth` provides native binaries for all major operating systems and does not require a Node.js runtime.
 
 ---
 

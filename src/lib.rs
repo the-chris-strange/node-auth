@@ -62,7 +62,7 @@ pub mod yarnrc;
 pub use error::AuthError;
 use std::path::{Path, PathBuf};
 
-/// Useful result of a library authentication run, with presentation left to callers.
+/// Result of a library authentication run.
 pub enum RunOutcome {
   /// The requested token, with no configuration files modified.
   Token(String),
@@ -176,11 +176,15 @@ pub async fn run(options: &Options) -> Result<RunOutcome, AuthError> {
   if options.bun_env && options.local_credential {
     return Err(AuthError::BunEnvLocalCredentialConflict);
   }
+
   if options.bun_env && options.bun == Some(false) {
     return Err(AuthError::BunEnvDisabledConflict);
   }
+
   let token = auth::get_credentials(options.token.as_deref()).await?;
+
   token::validate_token(&token)?;
+
   if options.print_token {
     return Ok(RunOutcome::Token(token));
   }
@@ -258,6 +262,7 @@ pub async fn run(options: &Options) -> Result<RunOutcome, AuthError> {
 
   let repo_npmrc = fs::resolve(&repo_npmrc)?;
   let cred_npmrc = fs::resolve(&cred_npmrc)?;
+
   let repo_yarn = if should_update_yarn {
     Some(fs::resolve(&repo_yarn)?)
   } else {
@@ -268,6 +273,7 @@ pub async fn run(options: &Options) -> Result<RunOutcome, AuthError> {
   } else {
     None
   };
+
   let repo_bun = if should_update_bun {
     Some(fs::resolve(&repo_bun)?)
   } else {
@@ -287,18 +293,23 @@ pub async fn run(options: &Options) -> Result<RunOutcome, AuthError> {
     .map(|path| vcs::check_path_status(path.parent().unwrap(), Path::new(".env.local")));
 
   let mut paths = vec![repo_npmrc.clone(), cred_npmrc.clone()];
+
   if let Some(path) = &repo_yarn {
     paths.push(path.clone());
   }
+
   if let Some(path) = &cred_yarn {
     paths.push(path.clone());
   }
+
   if let Some(path) = &repo_bun {
     paths.push(path.clone());
   }
+
   if let Some(path) = &bun_env_path {
     paths.push(path.clone());
   }
+
   let mut transaction = fs::FileTransaction::new(&paths)?;
 
   let bun_registries = if let Some(path) = &repo_bun {
@@ -308,6 +319,7 @@ pub async fn run(options: &Options) -> Result<RunOutcome, AuthError> {
         path.display()
       )));
     }
+
     bunfig::registry_urls(transaction.contents(path)?, options.allow_all_domains)?
   } else {
     Vec::new()
@@ -321,6 +333,7 @@ pub async fn run(options: &Options) -> Result<RunOutcome, AuthError> {
   } else {
     bun_registries.as_slice()
   };
+
   if npm_has_registry || !bun_npm_registries.is_empty() {
     let same_file = repo_npmrc == cred_npmrc;
     let (cleaned, updated) = npmrc::transform_npmrc_contents_with_registries(
@@ -331,7 +344,9 @@ pub async fn run(options: &Options) -> Result<RunOutcome, AuthError> {
       same_file,
       bun_npm_registries,
     )?;
+
     transaction.stage(&cred_npmrc, &updated)?;
+
     if !same_file && transaction.existed(&repo_npmrc)? && cleaned != npm_source {
       transaction.stage(&repo_npmrc, &cleaned)?;
     }
@@ -357,6 +372,7 @@ pub async fn run(options: &Options) -> Result<RunOutcome, AuthError> {
       .ok_or_else(|| {
         AuthError::Config("No eligible registry configuration found in bunfig.toml".to_string())
       })?;
+
     if updated_bun != bun_content {
       transaction.stage(bun_path, &updated_bun)?;
     }
@@ -375,6 +391,7 @@ pub async fn run(options: &Options) -> Result<RunOutcome, AuthError> {
       "No eligible Artifact Registry configuration found".to_string(),
     ));
   }
+
   Ok(RunOutcome::Updated {
     paths,
     git_status,
@@ -415,6 +432,7 @@ pub fn run_blocking(options: &Options) -> Result<RunOutcome, AuthError> {
       "run_blocking cannot be called within an active Tokio runtime; use run().await".to_string(),
     ));
   }
+
   let runtime = tokio::runtime::Builder::new_current_thread()
     .enable_all()
     .build()?;
@@ -436,6 +454,7 @@ mod tests {
       run(&options).await,
       Err(AuthError::BunEnvLocalCredentialConflict)
     ));
+
     let options = Options {
       local_credential: false,
       bun: Some(false),
@@ -457,6 +476,7 @@ mod tests {
     assert!(
       matches!(run_blocking(&options).unwrap(), RunOutcome::Token(token) if token == "valid-token")
     );
+
     options.token = Some("invalid\ntoken".to_string());
     assert!(run_blocking(&options).is_err());
   }
@@ -466,7 +486,9 @@ mod tests {
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("project.npmrc");
     let target = dir.path().join("user.npmrc");
+
     std::fs::write(&source, "registry=https://us-npm.pkg.dev/project/repo/\n").unwrap();
+
     let options = Options {
       token: Some("valid-token".to_string()),
       repo_config: Some(source),

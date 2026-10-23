@@ -40,10 +40,10 @@ const CLOUD_PLATFORM_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platfo
 pub async fn get_credentials(explicit_token: Option<&str>) -> Result<String, AuthError> {
   if let Some(token) = explicit_token {
     validate_token(token)?;
+
     return Ok(token.to_string());
   }
 
-  // 1. Try Google Application Default Credentials (ADC)
   log::debug!("Retrieving application default credentials...");
   match get_adc_credentials().await {
     Ok(token) => {
@@ -55,7 +55,6 @@ pub async fn get_credentials(explicit_token: Option<&str>) -> Result<String, Aut
     }
   }
 
-  // 2. Fall back to gcloud CLI
   log::debug!("Retrieving credentials from gcloud CLI...");
   match get_gcloud_credentials() {
     Ok(token) => return Ok(token),
@@ -102,9 +101,12 @@ fn get_gcloud_credentials() -> Result<String, AuthError> {
         let stdout = String::from_utf8(output.stdout).map_err(|e| {
           AuthError::Authentication(format!("gcloud returned a non-UTF-8 token: {e}"))
         })?;
+
         let token = stdout.trim_end_matches(['\r', '\n']);
         validate_token(token)?;
+
         log::debug!("Successfully retrieved credentials from gcloud CLI.");
+
         return Ok(token.to_string());
       }
       Ok(output) => {

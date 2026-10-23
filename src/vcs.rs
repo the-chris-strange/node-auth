@@ -25,9 +25,11 @@ pub fn find_git_repo_root(start_dir: &Path) -> Option<PathBuf> {
     .stderr(Stdio::null())
     .output()
     .ok()?;
+
   if !output.status.success() {
     return None;
   }
+
   Some(
     PathBuf::from(String::from_utf8(output.stdout).ok()?.trim())
       .canonicalize()
@@ -49,6 +51,7 @@ pub fn check_path_status(dir: &Path, path: &Path) -> GitStatus {
     Ok(status) if status.code() == Some(128) => false,
     _ => return GitStatus::Unavailable,
   };
+
   if !repo {
     return GitStatus::NotGitRepo;
   }
@@ -61,6 +64,7 @@ pub fn check_path_status(dir: &Path, path: &Path) -> GitStatus {
     .stdout(Stdio::null())
     .stderr(Stdio::null())
     .status();
+
   match tracked {
     Ok(status) if status.success() => return GitStatus::GitRepoNotIgnored,
     Ok(status) if status.code() == Some(1) => {}
@@ -102,6 +106,7 @@ mod tests {
   fn git_determines_ignore_status() {
     let dir = tempdir().unwrap();
     assert_eq!(check_git_status(dir.path()), GitStatus::NotGitRepo);
+
     let status = Command::new("git")
       .arg("-C")
       .arg(dir.path())
@@ -110,7 +115,9 @@ mod tests {
       .unwrap();
     assert!(status.success());
     assert_eq!(check_git_status(dir.path()), GitStatus::GitRepoNotIgnored);
+
     fs::write(dir.path().join(".gitignore"), ".npmrc\n").unwrap();
+
     assert_eq!(check_git_status(dir.path()), GitStatus::GitRepoIgnored);
     assert_eq!(
       find_git_repo_root(dir.path()).unwrap(),

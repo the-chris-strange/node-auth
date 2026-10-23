@@ -34,6 +34,7 @@ impl RegistryPolicy {
   pub fn parse(&self, input: &str) -> Result<Option<RegistryUrl>, AuthError> {
     let mut url =
       Url::parse(input).map_err(|e| AuthError::Config(format!("Invalid registry URL: {e}")))?;
+
     if url.scheme() != "https"
       || url.host_str().is_none()
       || !url.username().is_empty()
@@ -53,14 +54,17 @@ impl RegistryPolicy {
           .bytes()
           .all(|b| b.is_ascii_alphanumeric() || b == b'-')
     });
+
     if !self.allow_all_domains && !is_gar {
       return Ok(None);
     }
+
     if is_gar && url.port().is_some() && !self.allow_all_domains {
       return Err(AuthError::Config(
         "Artifact Registry URL may not use a nonstandard port".to_string(),
       ));
     }
+
     if is_gar
       && url
         .path_segments()
@@ -75,11 +79,13 @@ impl RegistryPolicy {
       let path = format!("{}/", url.path());
       url.set_path(&path);
     }
+
     let authority = match url.port() {
       Some(port) => format!("{host}:{port}"),
       None => host,
     };
     let npm_key = format!("//{authority}{}", url.path());
+
     Ok(Some(RegistryUrl { url, npm_key }))
   }
 
@@ -88,6 +94,7 @@ impl RegistryPolicy {
     if !key.starts_with("//") {
       return Err(AuthError::Config("Invalid npm registry key".to_string()));
     }
+
     self.parse(&format!("https:{key}"))
   }
 }

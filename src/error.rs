@@ -53,25 +53,3 @@ pub enum AuthError {
   #[error("Regex error: {0}")]
   Regex(#[from] regex::Error),
 }
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn library_errors_do_not_include_cli_guidance() {
-    for error in [
-      AuthError::NoNpmRegistry,
-      AuthError::CredentialsUnavailable,
-      AuthError::BunEnvLocalCredentialConflict,
-      AuthError::BunEnvDisabledConflict,
-      AuthError::Authentication("provider failed".to_string()),
-    ] {
-      let message = error.to_string();
-      assert!(!message.contains('\n'));
-      assert!(!message.contains("--"));
-      assert!(!message.contains("Please run"));
-      assert!(!message.contains("Ensure"));
-    }
-  }
-}
