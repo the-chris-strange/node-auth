@@ -1,25 +1,25 @@
 [package]
 name = "node-auth"
 version = "0.3.1"
-edition = "2024"
-description = "Authenticate npm, yarn, pnpm, and Bun to Google Artifact Registry using Google Cloud ADC"
-readme = "README.md"
+categories = [ "authentication", "command-line-utilities", "development-tools" ]
 documentation = "https://docs.rs/node-auth"
+edition = "2024"
+exclude = [ ".github/", "scripts/" ]
 homepage = "https://github.com/the-chris-strange/node-auth"
-repository = "https://github.com/the-chris-strange/node-auth"
+keywords = [ "artifact-registry", "gcp", "npm", "authentication" ]
 license = "Apache-2.0"
-keywords = ["artifact-registry", "gcp", "npm", "authentication"]
-categories = ["authentication", "command-line-utilities", "development-tools"]
-publish = ["crates-io"]
-exclude = [".github/", "scripts/"]
+publish = [ "crates-io" ]
+readme = "README.md"
+repository = "https://github.com/the-chris-strange/node-auth"
+description = "Authenticate npm, yarn, pnpm, and Bun to Google Artifact Registry using Google Cloud ADC"
 
 [package.metadata.docs.rs]
 all-features = true
-rustdoc-args = ["--cfg", "docsrs"]
+rustdoc-args = [ "--cfg", "docsrs" ]
 
 [features]
-default = ["cli"]
-cli = ["dep:clap", "dep:colored", "tokio/macros", "tokio/rt-multi-thread"]
+cli = [ "dep:clap", "dep:colored", "tokio/macros", "tokio/rt-multi-thread" ]
+default = [ "cli" ]
 
 [lib]
 name = "node_auth"
@@ -28,15 +28,19 @@ path = "src/lib.rs"
 [[bin]]
 name = "node-auth"
 path = "src/main.rs"
-required-features = ["cli"]
+required-features = [ "cli" ]
 
 [[bin]]
 name = "artifactregistry-auth"
 path = "src/bin/artifactregistry_auth.rs"
-required-features = ["cli"]
+required-features = [ "cli" ]
+
+[[bin]]
+name = "node-auth-token"
+path = "src/bin/node_auth_token.rs"
 
 [dependencies]
-clap = { version = "4.5", features = ["derive", "env"], optional = true }
+clap = { version = "4.5", features = [ "derive", "env" ], optional = true }
 colored = { version = "3.1", optional = true }
 dirs = "7.0"
 gcp_auth = "0.12"
@@ -44,19 +48,19 @@ log = "0.4"
 regex = "1.10"
 tempfile = "3.10"
 thiserror = "2.0"
-tokio = { version = "1.38", features = ["rt", "net", "time"] }
+tokio = { version = "1.38", features = [ "rt", "net", "time" ] }
 toml_edit = "0.25"
 url = "2.5"
 yaml-edit = "0.3.2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
-    "Win32_Foundation",
-    "Win32_Security",
-    "Win32_Security_Authorization",
-    "Win32_Storage_FileSystem",
-    "Win32_System_Threading",
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Threading",
 ] }
 
 [dev-dependencies]
-tokio = { version = "1.38", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.38", features = [ "macros", "rt-multi-thread" ] }

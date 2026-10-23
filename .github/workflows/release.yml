@@ -45,7 +45,15 @@ jobs:
           fi
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - run: cargo fmt --all -- --check
+      - name: Install rumdl
+        uses: rvben/rumdl@v0
+        with:
+          version: "0.3.0"
+          install-only: true
+      - uses: dprint/check@v2
+        with:
+          dprint-version: 0.64.0
+          cache: true
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked --all-targets
       - run: cargo package --locked
@@ -91,6 +99,7 @@ jobs:
           mkdir -p dist/package
           cp "target/$TARGET/release/node-auth" dist/package/
           cp "target/$TARGET/release/artifactregistry-auth" dist/package/
+          cp "target/$TARGET/release/node-auth-token" dist/package/
           cp README.md LICENSE dist/package/
           tar -C dist/package -czf "dist/node-auth-v$VERSION-$TARGET.tar.gz" .
       - name: Create Windows archive
@@ -103,6 +112,7 @@ jobs:
           New-Item -ItemType Directory -Force dist/package | Out-Null
           Copy-Item "target/$env:TARGET/release/node-auth.exe" dist/package/
           Copy-Item "target/$env:TARGET/release/artifactregistry-auth.exe" dist/package/
+          Copy-Item "target/$env:TARGET/release/node-auth-token.exe" dist/package/
           Copy-Item README.md, LICENSE dist/package/
           Compress-Archive -Path dist/package/* -DestinationPath "dist/node-auth-v$env:VERSION-$env:TARGET.zip"
       - uses: actions/upload-artifact@v7
@@ -150,6 +160,13 @@ jobs:
           pattern: release-*
           path: dist
           merge-multiple: true
+      - name: Create Homebrew archive aliases
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          cp "dist/node-auth-v$VERSION-x86_64-apple-darwin.tar.gz" "dist/node-auth-$VERSION-darwin-amd64.tar.gz"
+          cp "dist/node-auth-v$VERSION-aarch64-apple-darwin.tar.gz" "dist/node-auth-$VERSION-darwin-arm64.tar.gz"
+          cp "dist/node-auth-v$VERSION-x86_64-unknown-linux-gnu.tar.gz" "dist/node-auth-$VERSION-linux-amd64.tar.gz"
       - name: Create checksums and package manifests
         env:
           REPOSITORY: ${{ github.repository }}
@@ -167,8 +184,8 @@ jobs:
         id: packslip
         uses: jdx/packslip@v1
         with:
-          artifacts: dist/node-auth-*.tar.gz dist/node-auth-*.zip
-          bin: node-auth artifactregistry-auth
+          artifacts: dist/node-auth-v*.tar.gz dist/node-auth-v*.zip
+          bin: node-auth artifactregistry-auth node-auth-token
           tag: ${{ needs.preflight.outputs.tag }}
           version: ${{ needs.preflight.outputs.version }}
           upload: "false"
@@ -188,88 +205,95 @@ jobs:
     needs:
       - preflight
       - github-release
-    if: vars.HOMEBREW_TAP_REPOSITORY != ''
     runs-on: ubuntu-latest
     environment: release
     steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.preflight.outputs.tag }}
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: release-*
-          path: dist
-          merge-multiple: true
-      - name: Render formula
+      - name: Resolve Homebrew tap
+        id: tap
         env:
-          REPOSITORY: ${{ github.repository }}
-          VERSION: ${{ needs.preflight.outputs.version }}
-        run: >-
-          python3 scripts/render-package-manifests.py
-          --repository "$REPOSITORY"
-          --version "$VERSION"
-          --artifacts dist
-          --output packages
-      - name: Check out Homebrew tap
-        uses: actions/checkout@v7
-        with:
-          repository: ${{ vars.HOMEBREW_TAP_REPOSITORY }}
-          token: ${{ secrets.PACKAGE_REPOSITORY_TOKEN }}
-          path: tap
-      - name: Push formula
-        env:
-          VERSION: ${{ needs.preflight.outputs.version }}
+          TAP_REPOSITORY: ${{ vars.HOMEBREW_TAP_REPOSITORY || 'the-chris-strange/homebrew-tap' }}
+          PACKAGE_TOKEN: ${{ secrets.PACKAGE_REPOSITORY_TOKEN }}
         run: |
-          mkdir -p tap/Formula
-          cp packages/node-auth.rb tap/Formula/node-auth.rb
-          cd tap
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add Formula/node-auth.rb
-          git diff --cached --quiet || git commit -m "node-auth $VERSION"
-          git push
+          if [[ -z "$PACKAGE_TOKEN" ]]; then
+            echo "::error::Set PACKAGE_REPOSITORY_TOKEN with write access to the tap and bucket."
+            exit 1
+          fi
+          if [[ ! "$TAP_REPOSITORY" =~ ^[^/]+/homebrew-[^/]+$ ]]; then
+            echo "::error::HOMEBREW_TAP_REPOSITORY must be owner/homebrew-name."
+            exit 1
+          fi
+          echo "owner=${TAP_REPOSITORY%%/*}" >> "$GITHUB_OUTPUT"
+          echo "name=${TAP_REPOSITORY#*/}" >> "$GITHUB_OUTPUT"
+      # Homebrew Releaser always reads the latest release, including on manual runs.
+      - name: Verify release is latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          latest="$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name)"
+          if [[ "$latest" != "$TAG" ]]; then
+            echo "::error::Homebrew Releaser requires the latest stable release ($latest); requested $TAG."
+            exit 1
+          fi
+      - name: Publish Homebrew formula
+        uses: Justintime50/homebrew-releaser@v4
+        with:
+          homebrew_owner: ${{ steps.tap.outputs.owner }}
+          homebrew_tap: ${{ steps.tap.outputs.name }}
+          github_token: ${{ secrets.PACKAGE_REPOSITORY_TOKEN }}
+          target_darwin_amd64: "true"
+          target_darwin_arm64: "true"
+          target_linux_amd64: "true"
+          skip_checksum: "true"
+          install: |
+            bin.install "node-auth"
+            bin.install "artifactregistry-auth"
+            bin.install "node-auth-token"
+          test: 'assert_match "Usage", shell_output("#{bin}/node-auth --help")'
 
   publish-scoop:
     name: Update Scoop bucket
     needs:
       - preflight
       - github-release
-    if: vars.SCOOP_BUCKET_REPOSITORY != ''
     runs-on: ubuntu-latest
     environment: release
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.preflight.outputs.tag }}
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: release-*
-          path: dist
-          merge-multiple: true
-      - name: Render manifest
+      - name: Validate publishing token
         env:
-          REPOSITORY: ${{ github.repository }}
-          VERSION: ${{ needs.preflight.outputs.version }}
-        run: >-
-          python3 scripts/render-package-manifests.py
-          --repository "$REPOSITORY"
-          --version "$VERSION"
-          --artifacts dist
-          --output packages
+          PACKAGE_TOKEN: ${{ secrets.PACKAGE_REPOSITORY_TOKEN }}
+        run: |
+          if [[ -z "$PACKAGE_TOKEN" ]]; then
+            echo "::error::Set PACKAGE_REPOSITORY_TOKEN with write access to the tap and bucket."
+            exit 1
+          fi
       - name: Check out Scoop bucket
         uses: actions/checkout@v7
         with:
-          repository: ${{ vars.SCOOP_BUCKET_REPOSITORY }}
+          repository: ${{ vars.SCOOP_BUCKET_REPOSITORY || 'the-chris-strange/scoop-bucket' }}
           token: ${{ secrets.PACKAGE_REPOSITORY_TOKEN }}
           path: bucket
+      - name: Create Scoop manifest directory
+        run: mkdir -p bucket/bucket
+      - name: Render Scoop manifest
+        uses: xberg-io/actions/publish-scoop-manifests@v1
+        with:
+          bucket-dir: ${{ github.workspace }}/bucket
+          config-file: scripts/publish/scoop.json
+          tag: ${{ needs.preflight.outputs.tag }}
+          version: ${{ needs.preflight.outputs.version }}
+          github-repo: ${{ github.repository }}
       - name: Push manifest
         env:
           VERSION: ${{ needs.preflight.outputs.version }}
         run: |
-          cp packages/node-auth.json bucket/node-auth.json
           cd bucket
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add node-auth.json
+          git add bucket/node-auth.json
           git diff --cached --quiet || git commit -m "node-auth $VERSION"
           git push

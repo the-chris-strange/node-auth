@@ -20,7 +20,8 @@
 //! - **Bun Support**: Discovers registries in `bunfig.toml` and optionally manages a local
 //!   `.env.local` token reference.
 //!
-//! The `cli` feature is enabled by default and provides both executables and the CLI modules.
+//! The `cli` feature is enabled by default and provides the interactive CLIs and CLI modules.
+//! The token-only executable also builds without this feature.
 //! Library consumers can disable it with `default-features = false` to omit CLI dependencies.
 //! The example below requires Tokio with the `macros` and `rt-multi-thread` features in the
 //! consuming application.
@@ -52,6 +53,7 @@ pub mod fs;
 #[cfg(feature = "cli")]
 pub mod logger;
 pub mod npmrc;
+pub mod pnpm;
 pub mod registry;
 pub mod token;
 pub mod vcs;

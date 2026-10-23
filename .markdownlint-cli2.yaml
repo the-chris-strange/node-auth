@@ -1,6 +1,0 @@
-ignores:
-  - .agents/**
-  - AGENTS.md
-  - target/**
-config:
-  line-length: false

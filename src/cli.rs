@@ -2,7 +2,7 @@
 
 use crate::Options;
 use crate::{logger, run};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -11,9 +11,14 @@ use std::process::ExitCode;
 #[command(
   name = "node-auth",
   about = "Authenticates npm, yarn, pnpm, and Bun to Google Artifact Registry using Google Cloud ADC",
-  version
+  version,
+  args_conflicts_with_subcommands = true
 )]
 pub struct Cli {
+  /// Configure dynamic package-manager authentication.
+  #[command(subcommand)]
+  pub command: Option<Command>,
+
   /// Path to the .npmrc file to read registry configs from.
   /// Defaults to project-level .npmrc if present, otherwise user-level ~/.npmrc.
   #[arg(long, env = "NODE_AUTH_REPO_CONFIG")]
@@ -75,10 +80,36 @@ pub struct Cli {
   pub print_token: bool,
 }
 
+/// Optional configuration commands; existing flag-only invocations retain their behavior.
+#[derive(Subcommand, Clone, Debug, PartialEq, Eq)]
+pub enum Command {
+  /// Configure dynamic authentication without retrieving or writing access tokens.
+  Configure {
+    /// Package manager to configure.
+    #[command(subcommand)]
+    manager: ConfigureManager,
+  },
+}
+
+/// Supported native package-manager integrations.
+#[derive(Subcommand, Clone, Debug, PartialEq, Eq)]
+pub enum ConfigureManager {
+  /// Set GAR token helpers in pnpm's trusted user auth.ini (pnpm >=11.13.0).
+  Pnpm {
+    /// Additional .npmrc file to discover GAR registry definitions from.
+    #[arg(long)]
+    repo_config: Option<PathBuf>,
+    /// Installed node-auth-token executable (defaults to sibling, then absolute PATH).
+    #[arg(long)]
+    token_helper: Option<PathBuf>,
+  },
+}
+
 impl std::fmt::Debug for Cli {
   fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     formatter
       .debug_struct("Cli")
+      .field("command", &self.command)
       .field("repo_config", &self.repo_config)
       .field("credential_config", &self.credential_config)
       .field("local_credential", &self.local_credential)
@@ -120,6 +151,32 @@ impl Cli {
 pub async fn execute() -> ExitCode {
   let cli = Cli::parse();
   logger::init(cli.verbose);
+  if let Some(Command::Configure {
+    manager: ConfigureManager::Pnpm {
+      repo_config,
+      token_helper,
+    },
+  }) = &cli.command
+  {
+    return match crate::pnpm::configure(repo_config.as_deref(), token_helper.as_deref()) {
+      Ok((path, changed)) => {
+        println!(
+          "{} pnpm authentication: {}",
+          if changed {
+            "Configured"
+          } else {
+            "Already configured"
+          },
+          path.display()
+        );
+        ExitCode::SUCCESS
+      }
+      Err(error) => {
+        logger::present_error(&error);
+        ExitCode::FAILURE
+      }
+    };
+  }
   match run(&cli.to_options()).await {
     Ok(outcome) => {
       logger::present_outcome(outcome);
