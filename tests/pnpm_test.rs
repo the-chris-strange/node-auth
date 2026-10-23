@@ -60,15 +60,16 @@ impl Fixture {
       .env_remove("NODE_AUTH_REPO_CONFIG")
       .env_remove("NPM_CONFIG_USERCONFIG")
       .env_remove("npm_config_userconfig")
-      .env(
-        "PNPM_CONFIG_NPMRC_AUTH_FILE",
-        self.dir.path().join("home/.npmrc"),
-      )
       .env_remove("pnpm_config_npmrc_auth_file")
       .env_remove("PNPM_CONFIG_USERCONFIG")
       .env_remove("pnpm_config_userconfig")
       .env_remove("PNPM_CONFIG__AUTH")
-      .env_remove("pnpm_config__auth");
+      .env_remove("pnpm_config__auth")
+      // Set the test's auth file after removing inherited variables, since Windows environment names are case-insensitive
+      .env(
+        "PNPM_CONFIG_NPMRC_AUTH_FILE",
+        self.dir.path().join("home/.npmrc"),
+      );
     cmd
   }
 }
@@ -153,7 +154,10 @@ fn discovers_workspace_and_user_registries_from_nested_directory() {
     "//europe-npm.pkg.dev/p/yaml/",
     "//asia-npm.pkg.dev/p/user/",
   ] {
-    assert!(content.contains(&format!("{key}:tokenHelper=")));
+    assert!(
+      content.contains(&format!("{key}:tokenHelper=")),
+      "missing helper for {key} in auth.ini:\n{content}"
+    );
   }
 }
 
