@@ -43,27 +43,34 @@ pub fn transform_yarnrc_contents_with_policy(
   allow_all_domains: bool,
 ) -> Result<Option<String>, AuthError> {
   validate_token(creds)?;
+
   let from_file = parse_yarnrc(from_content, "source .yarnrc.yml")?;
   let to_file = parse_yarnrc(to_content, "credential .yarnrc.yml")?;
+
   let from_doc = from_file
     .document()
     .ok_or_else(|| AuthError::Config("Yarn configuration must contain a document".to_string()))?;
+
   let to_doc = to_file.document().ok_or_else(|| {
     AuthError::Config("Yarn credential configuration must contain a document".to_string())
   })?;
+
   let policy = RegistryPolicy { allow_all_domains };
   let from_root = from_doc
     .as_mapping()
     .ok_or_else(|| AuthError::Config("Yarn configuration must be a YAML mapping".to_string()))?;
+
   let to_root = to_doc.as_mapping().ok_or_else(|| {
     AuthError::Config("Yarn credential configuration must be a YAML mapping".to_string())
   })?;
+
   let mut found_any = false;
 
   if let Some(from_scopes_value) = from_root.get("npmScopes") {
     let from_scopes = from_scopes_value
       .as_mapping()
       .ok_or_else(|| AuthError::Config("Yarn npmScopes must be a mapping".to_string()))?;
+
     for (scope_key, scope_val) in from_scopes.iter() {
       let scope_name = scope_key
         .as_scalar()
@@ -72,9 +79,11 @@ pub fn transform_yarnrc_contents_with_policy(
       let scope = scope_val
         .as_mapping()
         .ok_or_else(|| AuthError::Config(format!("Yarn scope `{scope_name}` must be a mapping")))?;
+
       let Some(raw_registry) = scope.get("npmRegistryServer") else {
         continue;
       };
+
       let registry = raw_registry
         .as_scalar()
         .map(|value| value.as_string())
@@ -83,19 +92,23 @@ pub fn transform_yarnrc_contents_with_policy(
             "Yarn scope `{scope_name}` registry must be a string"
           ))
         })?;
+
       if policy.parse(&registry)?.is_none() {
         continue;
       }
+
       found_any = true;
 
       let target_scopes = ensure_mapping(&to_root, "npmScopes").ok_or_else(|| {
         AuthError::Config("Destination Yarn npmScopes must be a mapping".to_string())
       })?;
+
       let target_scope = ensure_mapping(&target_scopes, &scope_name).ok_or_else(|| {
         AuthError::Config(format!(
           "Destination Yarn scope `{scope_name}` must be a mapping"
         ))
       })?;
+
       target_scope.set("npmRegistryServer", registry);
       target_scope.set("npmAlwaysAuth", true);
       target_scope.set("npmAuthToken", creds);
@@ -105,13 +118,16 @@ pub fn transform_yarnrc_contents_with_policy(
   if !found_any {
     return Ok(None);
   }
+
   Ok(Some(to_file.to_string()))
 }
 
 fn parse_yarnrc(content: &str, input: &'static str) -> Result<YamlFile, AuthError> {
   if content.trim().is_empty() {
     let file = YamlFile::new();
+
     file.ensure_document();
+
     Ok(file)
   } else {
     YamlFile::from_str(content).map_err(|source| AuthError::YamlInput { input, source })
@@ -155,6 +171,7 @@ pub fn update_yarn_configs_with_policy(
   let mut transaction = FileTransaction::new(&[from_path.clone(), to_path.clone()])?;
   let from_content = transaction.contents(&from_path)?.to_owned();
   let to_content = transaction.contents(&to_path)?.to_owned();
+
   match transform_yarnrc_contents_with_policy(&from_content, &to_content, creds, allow_all_domains)?
   {
     Some(dumped) => {
@@ -179,8 +196,10 @@ npmScopes:
   my-scope:
     npmRegistryServer: "https://us-central1-npm.pkg.dev/my-project/my-repo"
 "#;
+
     let res = transform_yarnrc_contents(from, "", "test-token").unwrap();
     assert!(res.is_some());
+
     let out = res.unwrap();
     assert!(out.contains("npmScopes"));
     assert!(out.contains("my-scope"));
@@ -228,6 +247,7 @@ checksumBehavior: 'throw'
       .unwrap()
       .unwrap();
     let parsed = YamlFile::from_str(&out).unwrap().document().unwrap();
+
     let token = parsed
       .get_mapping("npmScopes")
       .unwrap()

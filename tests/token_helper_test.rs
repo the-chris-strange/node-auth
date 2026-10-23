@@ -1,6 +1,8 @@
 //! Token-helper process contracts, including builds without CLI dependencies.
+
 use std::{fs, process::Command};
 use tempfile::tempdir;
+
 fn helper() -> std::path::PathBuf {
   env!("CARGO_BIN_EXE_node-auth-token").into()
 }
@@ -8,7 +10,9 @@ fn helper() -> std::path::PathBuf {
 #[test]
 fn token_binary_prints_only_token_and_never_writes_files() {
   let dir = tempdir().unwrap();
+
   fs::write(dir.path().join(".npmrc"), "# untouched\n").unwrap();
+
   let output = Command::new(helper())
     .current_dir(dir.path())
     .env("NODE_AUTH_TOKEN", "fixture-token")
@@ -50,14 +54,18 @@ fn token_helper_rejects_arguments_without_output() {
 #[test]
 fn token_helper_preserves_gcloud_fallback_and_auth_failure() {
   let dir = tempdir().unwrap();
+
   #[cfg(unix)]
   let gcloud = dir.path().join("gcloud");
+
   #[cfg(windows)]
   let gcloud = dir.path().join("gcloud.cmd");
+
   for success in [true, false] {
     #[cfg(unix)]
     {
       use std::os::unix::fs::PermissionsExt;
+
       fs::write(
         &gcloud,
         if success {
@@ -69,6 +77,7 @@ fn token_helper_preserves_gcloud_fallback_and_auth_failure() {
       .unwrap();
       fs::set_permissions(&gcloud, fs::Permissions::from_mode(0o755)).unwrap();
     }
+
     #[cfg(windows)]
     fs::write(
       &gcloud,
@@ -79,6 +88,7 @@ fn token_helper_preserves_gcloud_fallback_and_auth_failure() {
       },
     )
     .unwrap();
+
     // An explicitly missing ADC file fails before metadata requests or real user ADC.
     let out = Command::new(helper())
       .env_remove("NODE_AUTH_TOKEN")
@@ -91,6 +101,7 @@ fn token_helper_preserves_gcloud_fallback_and_auth_failure() {
       .output()
       .unwrap();
     assert_eq!(out.status.success(), success);
+
     if success {
       assert_eq!(out.stdout, b"fallback-token\n");
       assert!(out.stderr.is_empty());

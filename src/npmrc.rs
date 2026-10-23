@@ -23,6 +23,7 @@ pub enum NpmrcConfigType {
     /// Original unmodified raw line content.
     raw: String,
   },
+
   /// Auth token credential line (e.g. `//...:_authToken="..."`).
   AuthToken {
     /// Normalized registry URL associated with this token.
@@ -30,6 +31,7 @@ pub enum NpmrcConfigType {
     /// Extracted authentication token string.
     token: String,
   },
+
   /// Legacy basic auth password line (e.g. `//...:_password=...`).
   Password {
     /// Normalized registry URL associated with this password.
@@ -37,11 +39,13 @@ pub enum NpmrcConfigType {
     /// Base64-encoded password value.
     password: String,
   },
+
   /// Legacy basic auth username line (e.g. `//...:username=oauth2accesstoken`).
   Username {
     /// Normalized registry URL.
     registry: String,
   },
+
   /// Comments, blank lines, or other unrecognized configuration keys.
   Other(String),
 }
@@ -93,7 +97,6 @@ impl NpmrcParser {
   /// Parses a single `.npmrc` configuration line into a [`NpmrcConfigType`].
   pub fn parse_line(&self, line: &str) -> Result<NpmrcConfigType, AuthError> {
     let trimmed = line.trim();
-
     if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
       return Ok(NpmrcConfigType::Other(line.to_string()));
     }
@@ -103,6 +106,7 @@ impl NpmrcParser {
         .get(1)
         .map(|m| m.as_str().trim_end_matches(':').to_string());
       let registry_raw = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+
       if let Some(registry) = self.policy.parse(registry_raw)? {
         return Ok(NpmrcConfigType::Registry {
           scope,
@@ -119,6 +123,7 @@ impl NpmrcParser {
           .split_once(":_authToken=")
           .map(|(_, t)| t.trim().trim_matches('"').trim_matches('\'').to_string())
           .unwrap_or_default();
+
         return Ok(NpmrcConfigType::AuthToken {
           registry: registry.npm_key().to_string(),
           token: token_part,
@@ -133,6 +138,7 @@ impl NpmrcParser {
           .split_once(":_password=")
           .map(|(_, p)| p.trim().to_string())
           .unwrap_or_default();
+
         return Ok(NpmrcConfigType::Password {
           registry: registry.npm_key().to_string(),
           password: pass_part,
@@ -160,11 +166,13 @@ pub fn has_registry(
   allow_all_domains: bool,
 ) -> Result<bool, AuthError> {
   let parser = NpmrcParser::new(allow_all_domains)?;
+
   for line in from_content.lines().chain(to_content.lines()) {
     if matches!(parser.parse_line(line)?, NpmrcConfigType::Registry { .. }) {
       return Ok(true);
     }
   }
+
   Ok(false)
 }
 
@@ -215,6 +223,7 @@ pub(crate) fn transform_npmrc_contents_with_registries(
   additional_registries: &[RegistryUrl],
 ) -> Result<(String, String), AuthError> {
   validate_token(creds)?;
+
   let parser = NpmrcParser::new(allow_all_domains)?;
   let mut registries_found = BTreeMap::new();
   let mut from_lines_out = Vec::new();
@@ -230,6 +239,7 @@ pub(crate) fn transform_npmrc_contents_with_registries(
         registries_found.insert(registry.clone(), scope);
         from_lines_out.push(raw);
       }
+
       NpmrcConfigType::AuthToken { registry, .. } => {
         if same_file {
           // Updating same file: will be refreshed below
@@ -240,14 +250,17 @@ pub(crate) fn transform_npmrc_contents_with_registries(
           // Strip from project config so secrets aren't checked into git
         }
       }
+
       NpmrcConfigType::Password { registry, .. } => {
         if !same_file {
           log::debug!("Removing legacy password for {registry} from project .npmrc");
         }
       }
+
       NpmrcConfigType::Username { .. } => {
         // Strip legacy oauth username line
       }
+
       NpmrcConfigType::Other(other) => {
         from_lines_out.push(other);
       }
@@ -292,6 +305,7 @@ pub(crate) fn transform_npmrc_contents_with_registries(
             to_lines_out.push(line.to_string());
           }
         }
+
         NpmrcConfigType::Password { registry, .. } => {
           if registries_found.contains_key(&registry) {
             if pending_registries.remove(&registry).is_some() {
@@ -301,6 +315,7 @@ pub(crate) fn transform_npmrc_contents_with_registries(
             to_lines_out.push(line.to_string());
           }
         }
+
         NpmrcConfigType::Username { registry } => {
           if !registries_found.contains_key(&registry) {
             to_lines_out.push(line.to_string());
@@ -362,10 +377,13 @@ pub fn update_npmrc_configs(
   )?;
 
   transaction.stage(&to_path, &to_output)?;
+
   if !same_file && transaction.existed(&from_path)? && from_output != from_content {
     transaction.stage(&from_path, &from_output)?;
   }
+
   transaction.commit()?;
+
   Ok(())
 }
 

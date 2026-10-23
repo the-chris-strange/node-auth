@@ -1,7 +1,5 @@
 {
-  "json": {
-    "array.preferSingleLine": true
-  },
+  "json": {},
   "toml": {
     "indentTables": "never",
     "indentEntries": "never",
@@ -22,14 +20,17 @@
   },
   "exec": {
     "cwd": "${configDir}",
-    "commands": [{
-      "command": "rustfmt",
-      "exts": ["rs"]
-    }, {
-      "command": "rumdl fmt --silent --stdin-filename {{file_path}} -",
-      "exts": ["md", "markdown"],
-      "cacheKeyFiles": [".rumdl.toml"]
-    }]
+    "commands": [
+      {
+        "command": "rustfmt",
+        "exts": ["rs"]
+      },
+      {
+        "command": "rumdl fmt --silent --stdin-filename {{file_path}} -",
+        "exts": ["md", "markdown"],
+        "cacheKeyFiles": [".rumdl.toml"]
+      }
+    ]
   },
   "excludes": ["**/*-lock.json"],
   "plugins": [

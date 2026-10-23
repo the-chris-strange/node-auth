@@ -68,6 +68,7 @@ pub fn present_outcome(outcome: RunOutcome) {
           GitStatus::GitRepoIgnored => {}
         }
       }
+
       if let Some(status) = bun_env_git_status {
         match status {
           GitStatus::GitRepoNotIgnored => eprintln!(
@@ -85,6 +86,7 @@ pub fn present_outcome(outcome: RunOutcome) {
           GitStatus::GitRepoIgnored => {}
         }
       }
+
       if !paths.is_empty() {
         println!(
           "{} Updated {} configuration file(s).",

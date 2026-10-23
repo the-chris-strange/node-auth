@@ -14,6 +14,7 @@ pub fn validate_token(token: &str) -> Result<(), AuthError> {
         .to_string(),
     ));
   }
+
   Ok(())
 }
 
