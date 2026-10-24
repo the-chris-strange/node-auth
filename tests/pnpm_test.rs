@@ -72,14 +72,18 @@ impl Fixture {
       .env_remove("NODE_AUTH_TOKEN")
       .env_remove("NODE_AUTH_REPO_CONFIG")
       .env_remove("NPM_CONFIG_USERCONFIG")
+      .env_remove("pnpm_config_npmrc_auth_file")
       .env_remove("npm_config_userconfig")
       .env_remove("PNPM_CONFIG_USERCONFIG")
       .env_remove("pnpm_config_userconfig")
       .env_remove("PNPM_CONFIG__AUTH")
       .env_remove("pnpm_config__auth");
 
-    #[cfg(not(windows))]
-    cmd.env_remove("pnpm_config_npmrc_auth_file");
+    #[cfg(windows)]
+    cmd.env(
+      "PNPM_CONFIG_NPMRC_AUTH_FILE",
+      self.dir.path().join("home/.npmrc"),
+    );
 
     cmd
   }
