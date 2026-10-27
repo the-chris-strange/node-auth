@@ -742,6 +742,7 @@ dependencies = [
  "gcp_auth",
  "log",
  "regex",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",

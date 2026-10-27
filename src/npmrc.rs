@@ -209,18 +209,18 @@ pub fn transform_npmrc_contents(
     creds,
     allow_all_domains,
     same_file,
-    &[],
+    None,
   )
 }
 
-/// Transform npm configuration and attach credentials for additional discovered registries.
+/// Transform npm configuration using resolved registries when supplied.
 pub(crate) fn transform_npmrc_contents_with_registries(
   from_content: &str,
   to_content: &str,
   creds: &str,
   allow_all_domains: bool,
   same_file: bool,
-  additional_registries: &[RegistryUrl],
+  resolved_registries: Option<&[RegistryUrl]>,
 ) -> Result<(String, String), AuthError> {
   validate_token(creds)?;
 
@@ -278,10 +278,11 @@ pub(crate) fn transform_npmrc_contents_with_registries(
     }
   }
 
-  for registry in additional_registries {
-    registries_found
-      .entry(registry.npm_key().to_string())
-      .or_insert(None);
+  if let Some(registries) = resolved_registries {
+    registries_found.clear();
+    for registry in registries {
+      registries_found.insert(registry.npm_key().to_owned(), None);
+    }
   }
 
   if registries_found.is_empty() {

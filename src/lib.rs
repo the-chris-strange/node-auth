@@ -55,6 +55,7 @@ pub mod logger;
 pub mod npmrc;
 pub mod pnpm;
 pub mod registry;
+mod registry_query;
 pub mod token;
 pub mod vcs;
 pub mod yarnrc;
@@ -189,8 +190,25 @@ pub async fn run(options: &Options) -> Result<RunOutcome, AuthError> {
     return Ok(RunOutcome::Token(token));
   }
 
+  let discovery = if options.repo_config.is_none() && options.repo_config_yarn.is_none() {
+    let manager = registry_query::detect(&std::env::current_dir()?)?;
+    if manager == registry_query::Manager::Yarn && options.yarn == Some(false) {
+      None
+    } else {
+      registry_query::query(manager)?
+    }
+  } else {
+    None
+  };
+  let modern_yarn = discovery.as_ref().is_some_and(|d| d.modern_yarn);
+
   let home_dir = dirs::home_dir()
     .ok_or_else(|| AuthError::Config("Unable to determine user home directory".to_string()))?;
+
+  let discovered_npmrc = discovery
+    .as_ref()
+    .map(|d| d.project_root.join(".npmrc"))
+    .filter(|p| p.is_file());
 
   // Determine npmrc paths
   let (repo_npmrc, cred_npmrc, git_status) = if options.local_credential {
@@ -201,6 +219,8 @@ pub async fn run(options: &Options) -> Result<RunOutcome, AuthError> {
 
     let repo = if let Some(ref r) = options.repo_config {
       r.clone()
+    } else if let Some(source) = &discovered_npmrc {
+      source.clone()
     } else if local_npmrc.exists() {
       local_npmrc.clone()
     } else {
@@ -211,7 +231,9 @@ pub async fn run(options: &Options) -> Result<RunOutcome, AuthError> {
   } else {
     let repo = options.repo_config.clone().unwrap_or_else(|| {
       let local = Path::new(".npmrc");
-      if local.exists() {
+      if let Some(source) = &discovered_npmrc {
+        source.clone()
+      } else if local.exists() {
         local.to_path_buf()
       } else {
         home_dir.join(".npmrc")
@@ -241,14 +263,15 @@ pub async fn run(options: &Options) -> Result<RunOutcome, AuthError> {
     .clone()
     .unwrap_or_else(|| home_dir.join(".yarnrc.yml"));
 
-  let should_update_yarn = match options.yarn {
-    Some(explicit) => explicit,
-    None => {
-      options.repo_config_yarn.is_some()
-        || options.credential_config_yarn.is_some()
-        || Path::new(".yarnrc.yml").exists()
-    }
-  };
+  let should_update_yarn = modern_yarn
+    || match options.yarn {
+      Some(explicit) => explicit,
+      None => {
+        options.repo_config_yarn.is_some()
+          || options.credential_config_yarn.is_some()
+          || Path::new(".yarnrc.yml").exists()
+      }
+    };
 
   let repo_bun = options
     .repo_config_bun
@@ -327,14 +350,35 @@ pub async fn run(options: &Options) -> Result<RunOutcome, AuthError> {
 
   let npm_source = transaction.contents(&repo_npmrc)?.to_owned();
   let npm_target = transaction.contents(&cred_npmrc)?.to_owned();
-  let npm_has_registry = npmrc::has_registry(&npm_source, &npm_target, options.allow_all_domains)?;
-  let bun_npm_registries = if options.local_credential || options.bun_env {
-    &[][..]
+  let mut npm_registries = if let Some(discovery) = discovery.as_ref().filter(|_| !modern_yarn) {
+    discovery.registries(options.allow_all_domains)?
   } else {
-    bun_registries.as_slice()
+    None
+  };
+  if !options.local_credential && !options.bun_env && !bun_registries.is_empty() {
+    if npm_registries.is_none() {
+      let parser = npmrc::NpmrcParser::new(options.allow_all_domains)?;
+      let policy = registry::RegistryPolicy {
+        allow_all_domains: options.allow_all_domains,
+      };
+      let mut registries = Vec::new();
+      for line in npm_source.lines().chain(npm_target.lines()) {
+        if let npmrc::NpmrcConfigType::Registry { registry, .. } = parser.parse_line(line)?
+          && let Some(registry) = policy.parse_npm_key(&registry)?
+        {
+          registries.push(registry);
+        }
+      }
+      npm_registries = Some(registries);
+    }
+    npm_registries.as_mut().unwrap().extend(bun_registries);
+  }
+  let npm_has_registry = match &npm_registries {
+    Some(registries) => !registries.is_empty(),
+    None => npmrc::has_registry(&npm_source, &npm_target, options.allow_all_domains)?,
   };
 
-  if npm_has_registry || !bun_npm_registries.is_empty() {
+  if npm_has_registry {
     let same_file = repo_npmrc == cred_npmrc;
     let (cleaned, updated) = npmrc::transform_npmrc_contents_with_registries(
       &npm_source,
@@ -342,7 +386,7 @@ pub async fn run(options: &Options) -> Result<RunOutcome, AuthError> {
       &token,
       options.allow_all_domains,
       same_file,
-      bun_npm_registries,
+      npm_registries.as_deref(),
     )?;
 
     transaction.stage(&cred_npmrc, &updated)?;
@@ -355,12 +399,26 @@ pub async fn run(options: &Options) -> Result<RunOutcome, AuthError> {
   if let (Some(source), Some(target)) = (repo_yarn, cred_yarn) {
     let source_content = transaction.contents(&source)?.to_owned();
     let target_content = transaction.contents(&target)?.to_owned();
-    if let Some(updated) = yarnrc::transform_yarnrc_contents_with_policy(
-      &source_content,
-      &target_content,
-      &token,
-      options.allow_all_domains,
-    )? {
+    let updated = if modern_yarn {
+      yarnrc::transform_resolved_registries(
+        &target_content,
+        &token,
+        &discovery
+          .as_ref()
+          .unwrap()
+          .registries(options.allow_all_domains)?
+          .unwrap_or_default(),
+        &discovery.as_ref().unwrap().yarn_scopes,
+      )?
+    } else {
+      yarnrc::transform_yarnrc_contents_with_policy(
+        &source_content,
+        &target_content,
+        &token,
+        options.allow_all_domains,
+      )?
+    };
+    if let Some(updated) = updated {
       transaction.stage(&target, &updated)?;
     }
   }
@@ -390,6 +448,10 @@ pub async fn run(options: &Options) -> Result<RunOutcome, AuthError> {
     return Err(AuthError::Config(
       "No eligible Artifact Registry configuration found".to_string(),
     ));
+  }
+
+  if let Some(discovery) = discovery {
+    discovery.save();
   }
 
   Ok(RunOutcome::Updated {
