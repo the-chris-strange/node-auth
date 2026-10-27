@@ -1,0 +1,77 @@
+name: Release version bump
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - closed
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  tag-and-release:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+      - name: Detect crate version change
+        id: version
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import subprocess
+          import tomllib
+
+          def version_at(ref):
+              manifest = subprocess.check_output(
+                  ['git', 'show', f'{ref}:Cargo.toml'], text=True
+              )
+              return tomllib.loads(manifest)['package']['version']
+
+          previous = version_at(os.environ['BASE_SHA'])
+          current = version_at('HEAD')
+          if current == previous:
+              print(f'Crate version is unchanged ({current}); skipping release.')
+          else:
+              print(f'Crate version changed from {previous} to {current}.')
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+                  output.write(f'tag=v{current}\n')
+          PY
+      - name: Tag merge commit
+        if: steps.version.outputs.tag != ''
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if git show-ref --verify --quiet "refs/tags/$TAG"; then
+            if [[ "$(git rev-parse "$TAG^{commit}")" != "$(git rev-parse HEAD)" ]]; then
+              echo "::error::Tag $TAG already points to a different commit."
+              exit 1
+            fi
+            echo "Tag $TAG already points to this merge commit."
+          else
+            git tag "$TAG" HEAD
+            git push origin "refs/tags/$TAG"
+          fi
+      # A tag pushed with GITHUB_TOKEN does not trigger the push workflow.
+      # Explicit dispatch also allows retrying after a dispatch failure.
+      - name: Trigger release workflow
+        if: steps.version.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: gh workflow run release.yml --ref "$TAG" -f "tag=$TAG"
