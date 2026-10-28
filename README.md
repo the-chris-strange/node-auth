@@ -197,6 +197,21 @@ export NPM_TOKEN=$(node-auth --print-token)
 
 ---
 
+### Registry Discovery and Caching
+
+By default, node-auth detects npm, pnpm, or Yarn from `packageManager` in `package.json`, workspace configuration, or lockfiles, searching parent directories for workspace settings. It queries the installed manager for its effective registries, including scoped routes:
+
+- npm: `npm config list --json`.
+- pnpm: `pnpm config get registries --json`.
+- Yarn Classic: `yarn config list --json` (the Yarn and npm configuration objects).
+- Yarn 2+: `yarn config --json` and `yarn config get npmScopes --json`.
+
+Successful query results determine which registries receive credentials. Explicit `--repo-config` or `--repo-config-yarn` sources retain file-based discovery. Missing package managers also retain file-based discovery. Bun continues to use its existing configuration-file discovery. Query failures stop the update without writing credentials; raw command output is never printed because it may contain secrets. Each command has a 15-second timeout.
+
+Results are cached for **five minutes**, separately for each working directory and package manager. The cache contains validated registry URLs, Yarn scope routes, pnpm's version, and invalidation metadata; it contains no access tokens or raw configuration output. It lives under `$XDG_CACHE_HOME/node-auth` when that absolute path is set, otherwise `node-auth` in the operating system's user cache directory. Deleting that directory forces fresh queries.
+
+Changes to standard project, ancestor, and user configuration files, any environment variable, or the manager executable invalidate the cache immediately. npm queries from workspace packages run at the workspace root, and expired root `.npmrc` credentials are moved to the user credential file. Credential writes performed by node-auth do not force another query on the next run. Invalid or expired entries are refreshed, and an unwritable cache does not prevent authentication. Configuration extensions outside the tracked files may take up to five minutes to be reflected. A registry override on a later install command is not visible to an earlier discovery query.
+
 ### Dynamic pnpm Authentication
 
 With pnpm **11.13.0 or newer**, configure authentication once in each project or workspace whose GAR repositories you use:
@@ -217,7 +232,7 @@ node-auth configure pnpm --help
 
 `node-auth-token` is an argument-free executable that shares the library's `--print-token` path. It prints only an access token and a newline, sends errors to stderr, exits nonzero on failure, and never modifies configuration files. It uses `NODE_AUTH_TOKEN` if set; otherwise it obtains Google ADC and retains the existing `gcloud auth print-access-token` fallback. For automatic refresh, leave `NODE_AUTH_TOKEN` unset. The helper also builds with `--no-default-features`, without Clap or the colored CLI presentation dependencies.
 
-The configuration command does not authenticate. It discovers literal HTTPS GAR registry URLs from:
+The configuration command does not authenticate. It uses pnpm's resolved registry query and the same cache described above, plus any additional `.npmrc` passed with `--repo-config`. If pnpm reports `undefined` for the registry query, it falls back to discovering literal HTTPS GAR registry URLs from:
 
 - The workspace root `.npmrc`, or the nearest package root `.npmrc` when there is no workspace; otherwise the current directory's `.npmrc`.
 - The effective user `.npmrc` (including `PNPM_CONFIG_NPMRC_AUTH_FILE`, `PNPM_CONFIG_USERCONFIG`, global `npmrcAuthFile`, and `NPM_CONFIG_USERCONFIG`).
@@ -225,9 +240,9 @@ The configuration command does not authenticate. It discovers literal HTTPS GAR 
 - `registry` and `registries` in `pnpm-workspace.yaml` and global `config.yaml`. Both scope-to-URL mappings and URL-keyed registry declarations are recognized.
 - Registry definitions in the existing pnpm `auth.ini`.
 
-Yarn and Bun files are not pnpm registry sources. Unresolved environment-variable URLs and unsupported registry shapes produce errors; expand them to literal URLs before configuring. Registry routing from command-line options, environment variables, named registries, or external configuration extensions must first be expressed in one of the supported files. Configuration remains GAR-only; this command does not accept `--allow-all-domains` or the static credential flags.
+Yarn and Bun files are not pnpm registry sources. Native queries let pnpm apply its own registry precedence and environment expansion. File-based fallback rejects unresolved environment-variable URLs and unsupported registry shapes. Configuration remains GAR-only; this command does not accept `--allow-all-domains` or the static credential flags.
 
-The only file written is pnpm's trusted user-level `auth.ini`:
+Credentials are configured only in pnpm's trusted user-level `auth.ini` (registry discovery metadata is also cached):
 
 | Platform | Location |
 | --- | --- |
@@ -261,7 +276,7 @@ Upstream references: [pnpm authentication settings](https://pnpm.io/npmrc), [pnp
 
 ### Optional pnpm Integration Checks
 
-Normal tests use isolated files, explicit fixture tokens, and a version-only pnpm fixture; they do not need Google credentials or installed package managers. To check the installed package managers without network access:
+Normal tests use isolated files, explicit fixture tokens, and package-manager query fixtures; they do not need Google credentials or installed package managers. To check the installed package managers without network access:
 
 ```bash
 NODE_AUTH_TEST_PNPM=/absolute/path/to/pnpm \
@@ -396,8 +411,8 @@ CI runs formatting, lint, packaging, and tests on every pull request and push to
 
 To publish a release:
 
-1. Update `version` in `Cargo.toml`, update `Cargo.lock`, and merge the change.
-2. Create and push the matching tag, for example `v0.2.0`.
+1. Open a PR updating `version` in `Cargo.toml` and the matching entry in `Cargo.lock`.
+2. Merge the version-bump PR into `main`. GitHub Actions creates the matching tag (for example, `v0.2.0`) at the PR's merge commit and starts the release workflow. PRs without a crate version change are skipped. An existing tag pointing to another commit causes the automation to fail rather than move the tag.
 3. Approve the protected `release` environment if repository rules require it.
 
 The release workflow packages all three executables, publishes the crate, creates native archives and checksums, creates the GitHub release, publishes a signed Packslip manifest with build provenance, and pushes package definitions for the [brew tap](https://github.com/the-chris-strange/homebrew-tap) and [scoop bucket](https://github.com/the-chris-strange/scoop-bucket).

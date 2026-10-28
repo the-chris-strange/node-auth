@@ -5,8 +5,9 @@
 
 use crate::error::AuthError;
 use crate::fs::{FileTransaction, resolve};
-use crate::registry::RegistryPolicy;
+use crate::registry::{RegistryPolicy, RegistryUrl};
 use crate::token::validate_token;
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::str::FromStr;
 use yaml_edit::{Mapping, YamlFile};
@@ -132,6 +133,45 @@ fn parse_yarnrc(content: &str, input: &'static str) -> Result<YamlFile, AuthErro
   } else {
     YamlFile::from_str(content).map_err(|source| AuthError::YamlInput { input, source })
   }
+}
+
+/// Attach credentials to resolved Yarn registries without changing package routing.
+pub(crate) fn transform_resolved_registries(
+  content: &str,
+  creds: &str,
+  registries: &[RegistryUrl],
+  scopes: &BTreeMap<String, String>,
+) -> Result<Option<String>, AuthError> {
+  validate_token(creds)?;
+  if registries.is_empty() {
+    return Ok(None);
+  }
+  let file = parse_yarnrc(content, "credential .yarnrc.yml")?;
+  let root = file
+    .document()
+    .and_then(|d| d.as_mapping())
+    .ok_or_else(|| {
+      AuthError::Config("Yarn credential configuration must be a YAML mapping".into())
+    })?;
+  let targets = ensure_mapping(&root, "npmRegistries")
+    .ok_or_else(|| AuthError::Config("Yarn npmRegistries must be a mapping".into()))?;
+  for registry in registries {
+    let target = ensure_mapping(&targets, registry.as_url())
+      .ok_or_else(|| AuthError::Config("Yarn registry credentials must be a mapping".into()))?;
+    target.set("npmAlwaysAuth", true);
+    target.set("npmAuthToken", creds);
+  }
+  for (scope, url) in scopes {
+    if registries.iter().any(|registry| registry.as_url() == url) {
+      let targets = ensure_mapping(&root, "npmScopes")
+        .ok_or_else(|| AuthError::Config("Yarn npmScopes must be a mapping".into()))?;
+      let target = ensure_mapping(&targets, scope)
+        .ok_or_else(|| AuthError::Config("Yarn scope credentials must be a mapping".into()))?;
+      target.set("npmAlwaysAuth", true);
+      target.set("npmAuthToken", creds);
+    }
+  }
+  Ok(Some(file.to_string()))
 }
 
 fn ensure_mapping(parent: &Mapping, key: &str) -> Option<Mapping> {

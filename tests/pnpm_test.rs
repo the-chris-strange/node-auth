@@ -41,12 +41,20 @@ impl Fixture {
     {
       use std::os::unix::fs::PermissionsExt;
 
-      fs::write(bin.join("pnpm"), "#!/bin/sh\necho 11.13.0\n").unwrap();
+      fs::write(
+        bin.join("pnpm"),
+        "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 11.13.0; else echo undefined; fi\n",
+      )
+      .unwrap();
       fs::set_permissions(bin.join("pnpm"), fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     #[cfg(windows)]
-    fs::write(bin.join("pnpm.cmd"), "@echo off\r\necho 11.13.0\r\n").unwrap();
+    fs::write(
+      bin.join("pnpm.cmd"),
+      "@echo off\r\nif \"%1\"==\"--version\" (echo 11.13.0) else (echo undefined)\r\n",
+    )
+    .unwrap();
 
     Self { dir }
   }
@@ -69,6 +77,7 @@ impl Fixture {
       .env("HOME", self.dir.path().join("home"))
       .env("USERPROFILE", self.dir.path().join("home"))
       .env("XDG_CONFIG_HOME", self.dir.path().join("config"))
+      .env("XDG_CACHE_HOME", self.dir.path().join("cache"))
       .env_remove("NODE_AUTH_TOKEN")
       .env_remove("NODE_AUTH_REPO_CONFIG")
       .env_remove("NPM_CONFIG_USERCONFIG")
@@ -261,12 +270,16 @@ fn rejects_unsupported_pnpm_and_conflicting_legacy_flags() {
   let f = Fixture::new();
 
   #[cfg(unix)]
-  fs::write(f.dir.path().join("bin/pnpm"), "#!/bin/sh\necho 11.12.0\n").unwrap();
+  fs::write(
+    f.dir.path().join("bin/pnpm"),
+    "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 11.12.0; else echo undefined; fi\n",
+  )
+  .unwrap();
 
   #[cfg(windows)]
   fs::write(
     f.dir.path().join("bin/pnpm.cmd"),
-    "@echo off\r\necho 11.12.0\r\n",
+    "@echo off\r\nif \"%1\"==\"--version\" (echo 11.12.0) else (echo undefined)\r\n",
   )
   .unwrap();
 

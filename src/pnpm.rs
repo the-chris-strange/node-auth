@@ -22,7 +22,11 @@ pub fn configure(
   source: Option<&Path>,
   helper: Option<&Path>,
 ) -> Result<(PathBuf, bool), AuthError> {
-  check_version()?;
+  let discovery =
+    crate::registry_query::query(crate::registry_query::Manager::Pnpm)?.ok_or_else(|| {
+      config_error("pnpm is missing; install pnpm >=11.13.0 and ensure it is on PATH")
+    })?;
+  check_version(&discovery.version)?;
 
   let home = dirs::home_dir().ok_or_else(|| config_error("Cannot determine home directory"))?;
   let cwd = std::env::current_dir()?.canonicalize()?;
@@ -82,10 +86,6 @@ pub fn configure(
   let mut transaction = FileTransaction::new(&paths)?;
   let mut registries = BTreeSet::new();
 
-  for path in &sources {
-    discover_npmrc(transaction.contents(path)?, &mut registries)?;
-  }
-
   let global = transaction.contents(&resolve(&global_yaml)?)?;
 
   if global != global_content {
@@ -105,9 +105,19 @@ pub fn configure(
     ));
   }
 
-  discover_yaml(global, &mut registries)?;
-  discover_yaml(transaction.contents(&workspace_yaml)?, &mut registries)?;
-  discover_npmrc(transaction.contents(&target)?, &mut registries)?;
+  if let Some(resolved) = discovery.registries(false)? {
+    registries.extend(resolved.iter().map(|r| r.npm_key().to_owned()));
+    if let Some(source) = source {
+      discover_npmrc(transaction.contents(&resolve(source)?)?, &mut registries)?;
+    }
+  } else {
+    for path in &sources {
+      discover_npmrc(transaction.contents(path)?, &mut registries)?;
+    }
+    discover_yaml(global, &mut registries)?;
+    discover_yaml(transaction.contents(&workspace_yaml)?, &mut registries)?;
+    discover_npmrc(transaction.contents(&target)?, &mut registries)?;
+  }
 
   if registries.is_empty() {
     return Err(config_error(
@@ -142,11 +152,13 @@ pub fn configure(
   let updated = transform(original, &registries, &helper)?;
 
   if updated == original {
+    discovery.save();
     return Ok((target, false));
   }
 
   transaction.stage(&target, &updated)?;
   transaction.commit()?;
+  discovery.save();
 
   Ok((target, true))
 }
@@ -155,35 +167,11 @@ fn config_error(message: &str) -> AuthError {
   AuthError::Config(message.into())
 }
 
-fn check_version() -> Result<(), AuthError> {
-  let binaries: &[&str] = if cfg!(windows) {
-    &["pnpm.cmd", "pnpm.exe", "pnpm.bat", "pnpm"]
-  } else {
-    &["pnpm"]
-  };
-
-  let mut output = None;
-
-  for binary in binaries {
-    match std::process::Command::new(binary).arg("--version").output() {
-      Ok(result) => {
-        output = Some(result);
-        break;
-      }
-      Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-      Err(e) => return Err(e.into()),
-    }
-  }
-
-  let output = output.ok_or_else(|| {
-    config_error("pnpm is missing; install pnpm >=11.13.0 and ensure it is on PATH")
-  })?;
-
-  let version = String::from_utf8_lossy(&output.stdout);
+fn check_version(version: &str) -> Result<(), AuthError> {
   let version = version.trim();
   let parts: Vec<_> = version.split('.').map(str::parse::<u32>).collect();
 
-  if !output.status.success() || parts.len() != 3 || parts.iter().any(Result::is_err) {
+  if parts.len() != 3 || parts.iter().any(Result::is_err) {
     return Err(config_error(
       "Cannot determine stable pnpm version; install pnpm >=11.13.0",
     ));
@@ -200,7 +188,7 @@ fn check_version() -> Result<(), AuthError> {
   Ok(())
 }
 
-fn config_dir(home: &Path) -> Result<PathBuf, AuthError> {
+pub(crate) fn config_dir(home: &Path) -> Result<PathBuf, AuthError> {
   let base = if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
     let path = PathBuf::from(xdg);
     if !path.is_absolute() {
